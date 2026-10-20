@@ -1842,9 +1842,11 @@ struct ShieldControlPopoverView: View {
 
                     VStack(alignment: .leading, spacing: 1) {
                         HStack(spacing: 6) {
-                            Text("Uygulama İçi Otomatik Güncelleme")
+                            Text("Otomatik Güncelleme (OTA)")
                                 .font(.system(size: 11.5, weight: .bold, design: .rounded))
                                 .foregroundColor(.white)
+                                .lineLimit(1)
+                                .fixedSize()
 
                             Text("v\(engine.currentVersionString)")
                                 .font(.system(size: 9, weight: .black, design: .monospaced))
