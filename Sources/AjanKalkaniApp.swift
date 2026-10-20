@@ -179,6 +179,25 @@ struct AgentRuntimeStatus: Identifiable, Equatable {
     var isRunning: Bool { instanceCount > 0 }
 }
 
+// MARK: - Uzaktan OTA Güncelleme Modeli
+struct RemoteVersionManifest: Codable {
+    let version: String
+    let build: Int
+    let released_at: String?
+    let download_url: String?
+    let tarball_url: String?
+    let notes: String?
+}
+
+enum UpdateState: Equatable {
+    case idle
+    case checking
+    case upToDate
+    case updateAvailable(version: String, build: Int, notes: String)
+    case installing(step: String)
+    case failed(String)
+}
+
 // MARK: - Sekmeler
 enum DashboardTab: String, CaseIterable, Identifiable {
     case shield = "Kalkan"
@@ -235,7 +254,19 @@ final class ShieldEngine: ObservableObject {
     @Published var soundEffectsEnabled: Bool = true {
         didSet { UserDefaults.standard.set(soundEffectsEnabled, forKey: "soundEffectsEnabled") }
     }
+    @Published var autoInstallUpdates: Bool = true {
+        didSet { UserDefaults.standard.set(autoInstallUpdates, forKey: "autoInstallUpdates") }
+    }
     @Published var launchAtLogin: Bool = false
+
+    // OTA Güncelleme Durumu
+    let currentVersionString: String = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "3.1.0"
+    let currentBuildNumber: Int = Int(Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "310") ?? 310
+    @Published var updateState: UpdateState = .idle
+    @Published var latestManifest: RemoteVersionManifest? = nil
+    @Published var lastUpdateCheckText: String = "Henüz kontrol edilmedi"
+    private var isUpdatingAndRestarting: Bool = false
+    private var updateCheckTimer: Timer?
 
     // İzlenen Ajan Filtresi
     @Published var watchedAgentKinds: Set<CodingAgentKind> = Set(CodingAgentKind.allCases.filter { $0 != .terminalApps })
@@ -282,10 +313,205 @@ final class ShieldEngine: ObservableObject {
         if UserDefaults.standard.object(forKey: "soundEffectsEnabled") != nil {
             self.soundEffectsEnabled = UserDefaults.standard.bool(forKey: "soundEffectsEnabled")
         }
+        if UserDefaults.standard.object(forKey: "autoInstallUpdates") != nil {
+            self.autoInstallUpdates = UserDefaults.standard.bool(forKey: "autoInstallUpdates")
+        }
 
         checkLaunchAtLoginStatus()
+        restoreSessionIfUpdated()
         refreshSystemTelemetry()
         startTelemetryLoop()
+        startUpdateCheckLoop()
+    }
+
+    // MARK: - Güncelleme Sonrası Aktif Kalkan Oturumunu Kaldığı Saniyeden Devam Ettir
+    private func restoreSessionIfUpdated() {
+        if UserDefaults.standard.bool(forKey: "resumeShieldAfterUpdate") {
+            UserDefaults.standard.set(false, forKey: "resumeShieldAfterUpdate")
+            let savedDurRaw = UserDefaults.standard.integer(forKey: "resumeDurationRaw")
+            let savedRem = UserDefaults.standard.integer(forKey: "resumeRemainingSeconds")
+            let savedTot = UserDefaults.standard.integer(forKey: "resumeTotalSeconds")
+            let savedModeRaw = UserDefaults.standard.string(forKey: "resumeModeRaw") ?? ShieldMode.clamshellAgent.rawValue
+            let updatedToVer = UserDefaults.standard.string(forKey: "updatedToVersionString") ?? currentVersionString
+
+            if let mode = ShieldMode(rawValue: savedModeRaw) {
+                self.selectedMode = mode
+            }
+            if let dur = ShieldDuration(rawValue: savedDurRaw) {
+                self.selectedDuration = dur
+            }
+            self.totalSeconds = savedTot
+            self.remainingSeconds = savedRem
+            _ = setPmsetSleepDisabled(true)
+            startCaffeinateProcess()
+            self.isActive = true
+            self.hardwareSleepDisabled = true
+            self.statusMessage = "v\(updatedToVer) sürümüne güncellendi • Kalkan kesintisiz devam ediyor"
+            startCountdownLoop()
+            onStatusBarUpdate?()
+        }
+    }
+
+    // MARK: - Otomatik OTA Güncelleme Motoru (GitHub)
+    private func startUpdateCheckLoop() {
+        // Açılıştan 4 saniye sonra ilk kontrolü yap, ardından her 30 dakikada bir denetle
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4.0) { [weak self] in
+            self?.checkForUpdates(userInitiated: false)
+        }
+        updateCheckTimer = Timer.scheduledTimer(withTimeInterval: 1800.0, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                self?.checkForUpdates(userInitiated: false)
+            }
+        }
+        if let timer = updateCheckTimer {
+            RunLoop.main.add(timer, forMode: .common)
+        }
+    }
+
+    func checkForUpdates(userInitiated: Bool = true) {
+        if case .installing = updateState { return }
+        if userInitiated {
+            updateState = .checking
+        }
+
+        let ts = Int(Date().timeIntervalSince1970)
+        guard let url = URL(string: "https://raw.githubusercontent.com/kuarezma/ajan-kalkani/main/version.json?t=\(ts)") else {
+            return
+        }
+
+        var req = URLRequest(url: url)
+        req.cachePolicy = .reloadIgnoringLocalAndRemoteCacheData
+        req.timeoutInterval = 12
+
+        URLSession.shared.dataTask(with: req) { [weak self] data, response, error in
+            Task { @MainActor [weak self] in
+                guard let self = self else { return }
+
+                let formatter = DateFormatter()
+                formatter.dateFormat = "HH:mm"
+                let timeStr = formatter.string(from: Date())
+
+                guard error == nil,
+                      let http = response as? HTTPURLResponse, http.statusCode == 200,
+                      let data = data,
+                      let manifest = try? JSONDecoder().decode(RemoteVersionManifest.self, from: data) else {
+                    if userInitiated {
+                        self.updateState = .failed("Güncelleme sunucusuna ulaşılamadı")
+                    }
+                    return
+                }
+
+                self.latestManifest = manifest
+                self.lastUpdateCheckText = "Son kontrol: \(timeStr)"
+
+                if manifest.build > self.currentBuildNumber {
+                    let notes = manifest.notes ?? "Performans ve kararlılık iyileştirmeleri."
+                    self.updateState = .updateAvailable(version: manifest.version, build: manifest.build, notes: notes)
+
+                    if self.autoInstallUpdates && !userInitiated {
+                        self.performInAppUpdate()
+                    }
+                } else {
+                    self.updateState = .upToDate
+                }
+            }
+        }.resume()
+    }
+
+    func performInAppUpdate() {
+        let targetVersion = latestManifest?.version ?? "Yeni"
+        let tarballURL = latestManifest?.tarball_url ?? "https://github.com/kuarezma/ajan-kalkani/archive/refs/heads/main.tar.gz"
+        let releaseZipURL = latestManifest?.download_url ?? "https://github.com/kuarezma/ajan-kalkani/releases/latest/download/AjanKalkani.app.zip"
+
+        updateState = .installing(step: "GitHub'dan yeni sürüm indiriliyor...")
+        statusMessage = "v\(targetVersion) sürümü indiriliyor ve kuruluyor..."
+
+        // Eğer kalkan şu an aktifse durumu kaydet ki güncelleme bitip yeniden başladığında kaldığı yerden devam etsin
+        if isActive {
+            UserDefaults.standard.set(true, forKey: "resumeShieldAfterUpdate")
+            UserDefaults.standard.set(selectedDuration.rawValue, forKey: "resumeDurationRaw")
+            UserDefaults.standard.set(remainingSeconds, forKey: "resumeRemainingSeconds")
+            UserDefaults.standard.set(totalSeconds, forKey: "resumeTotalSeconds")
+            UserDefaults.standard.set(selectedMode.rawValue, forKey: "resumeModeRaw")
+            UserDefaults.standard.set(targetVersion, forKey: "updatedToVersionString")
+        }
+
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let script = """
+            set -e
+            STAGE="/tmp/ajan_kalkani_ota_$$"
+            rm -rf "$STAGE"
+            mkdir -p "$STAGE"
+            cd "$STAGE"
+
+            APP_BUNDLE="/Applications/Ajan Kalkanı.app"
+
+            # 1. Önce hazır imzalı Release ZIP paketi var mı dene
+            if curl -fsSL --max-time 20 "\(releaseZipURL)" -o app.zip 2>/dev/null && unzip -q app.zip 2>/dev/null && [ -d "Ajan Kalkanı.app" ]; then
+                rm -rf "$APP_BUNDLE"
+                cp -R "Ajan Kalkanı.app" "$APP_BUNDLE"
+                codesign --force --deep --sign - "$APP_BUNDLE"
+            else
+                # 2. Yoksa GitHub main dalından kaynak kodu çekip 1.5 saniyede Native Swift 6 ile derle ve kur
+                curl -fsSL --max-time 25 "\(tarballURL)" -o src.tar.gz
+                tar -xzf src.tar.gz
+                cd ajan-kalkani-*
+                mkdir -p build
+                swiftc -O -parse-as-library ./Sources/AjanKalkaniApp.swift -o ./build/AjanKalkani -framework SwiftUI -framework AppKit -framework IOKit -framework ServiceManagement
+                mkdir -p "$APP_BUNDLE/Contents/MacOS" "$APP_BUNDLE/Contents/Resources"
+                cp ./build/AjanKalkani "$APP_BUNDLE/Contents/MacOS/AjanKalkani"
+                cp ./Resources/Info.plist "$APP_BUNDLE/Contents/Info.plist"
+                cp ./Resources/AppIcon.icns "$APP_BUNDLE/Contents/Resources/AppIcon.icns"
+                codesign --force --deep --sign - "$APP_BUNDLE"
+            fi
+
+            rm -rf "$STAGE"
+            """
+
+            let proc = Process()
+            proc.executableURL = URL(fileURLWithPath: "/bin/bash")
+            proc.arguments = ["-c", script]
+            let pipe = Pipe()
+            proc.standardOutput = pipe
+            proc.standardError = pipe
+
+            do {
+                try proc.run()
+                _ = pipe.fileHandleForReading.readDataToEndOfFile()
+                proc.waitUntilExit()
+
+                if proc.terminationStatus == 0 {
+                    Task { @MainActor [weak self] in
+                        guard let self = self else { return }
+                        self.updateState = .installing(step: "Kurulum tamamlandı, yeniden başlatılıyor...")
+                        self.playSound(named: "Hero")
+                        self.sendUserNotification(
+                            title: "Ajan Kalkanı Güncellendi (v\(targetVersion))",
+                            body: "Yeni sürüm başarıyla kuruldu ve yeniden başlatıldı."
+                        )
+                        self.isUpdatingAndRestarting = true
+
+                        // 0.4 sn sonra yeni sürümü başlat ve mevcut süreci sonlandır
+                        let relaunch = Process()
+                        relaunch.executableURL = URL(fileURLWithPath: "/bin/sh")
+                        relaunch.arguments = ["-c", "sleep 0.4 && open -a \"/Applications/Ajan Kalkanı.app\""]
+                        try? relaunch.run()
+
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                            NSApplication.shared.terminate(nil)
+                        }
+                    }
+                } else {
+                    Task { @MainActor [weak self] in
+                        self?.updateState = .failed("Güncelleme kurulumu başarısız oldu")
+                    }
+                }
+            } catch {
+                Task { @MainActor [weak self] in
+                    self?.updateState = .failed("Güncelleme hatası: \(error.localizedDescription)")
+                }
+            }
+        }
     }
 
     // MARK: - Başlat / Durdur / Süre Değiştir
@@ -844,7 +1070,8 @@ final class ShieldEngine: ObservableObject {
 
     func cleanupBeforeExit() {
         stopCaffeinateProcess()
-        if isActive || hardwareSleepDisabled {
+        // Eğer uygulama kendi kendini güncelliyorsa kapak uykusu kilidini koru; yeni sürüm 0.4sn içinde devralacak
+        if !isUpdatingAndRestarting && (isActive || hardwareSleepDisabled) {
             _ = setPmsetSleepDisabled(false)
         }
     }
@@ -969,7 +1196,27 @@ struct ShieldControlPopoverView: View {
                     .fixedSize(horizontal: true, vertical: false)
             }
 
-            Spacer(minLength: 8)
+            Spacer(minLength: 6)
+
+            // Yeni güncelleme varsa başlıkta parlayan tek tık "Güncelle" rozeti göster
+            if case .updateAvailable(let newVer, _, _) = engine.updateState {
+                Button {
+                    engine.performInAppUpdate()
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "arrow.down.circle.fill")
+                            .font(.system(size: 11, weight: .bold))
+                        Text("v\(newVer)")
+                            .font(.system(size: 10, weight: .black, design: .rounded))
+                    }
+                    .foregroundColor(.black)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 5.5)
+                    .background(Capsule().fill(accentCyan))
+                }
+                .buttonStyle(.plain)
+                .help("Yeni sürümü hemen indir ve otomatik kur")
+            }
 
             // Sağ Üst Menü Çubuğuna Küçült / Gizle butonu
             Button {
@@ -1578,15 +1825,76 @@ struct ShieldControlPopoverView: View {
         )
     }
 
-    // MARK: - SEKME 3: Ayarlar Paneli (Sıfır Kaymalı Simetrik Satırlar)
+    // MARK: - SEKME 3: Ayarlar & Otomatik OTA Güncelleme Merkezi
     private var settingsPanel: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 8) {
+            // OTA Otomatik Güncelleme Kartı
+            VStack(alignment: .leading, spacing: 7) {
+                HStack(spacing: 10) {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .fill(accentCyan.opacity(0.16))
+                            .frame(width: 30, height: 30)
+                        Image(systemName: "arrow.triangle.2.circlepath.circle.fill")
+                            .font(.system(size: 15, weight: .bold))
+                            .foregroundColor(accentCyan)
+                    }
+
+                    VStack(alignment: .leading, spacing: 1) {
+                        HStack(spacing: 6) {
+                            Text("Uygulama İçi Otomatik Güncelleme")
+                                .font(.system(size: 11.5, weight: .bold, design: .rounded))
+                                .foregroundColor(.white)
+
+                            Text("v\(engine.currentVersionString)")
+                                .font(.system(size: 9, weight: .black, design: .monospaced))
+                                .padding(.horizontal, 5.5)
+                                .padding(.vertical, 1.5)
+                                .background(Capsule().fill(Color.white.opacity(0.12)))
+                                .foregroundColor(accentCyan)
+                        }
+
+                        Text(updateStatusSubtitle)
+                            .font(.system(size: 9.5, weight: .medium, design: .rounded))
+                            .foregroundColor(updateStatusColor)
+                            .lineLimit(1)
+                    }
+
+                    Spacer(minLength: 4)
+
+                    updateActionButton
+                }
+
+                Divider().background(Color.white.opacity(0.08))
+
+                HStack {
+                    Text("Yeni sürümleri arka planda otomatik indir ve kur")
+                        .font(.system(size: 10, weight: .semibold, design: .rounded))
+                        .foregroundColor(.white.opacity(0.78))
+                    Spacer()
+                    Toggle("", isOn: $engine.autoInstallUpdates)
+                        .toggleStyle(.switch)
+                        .controlSize(.small)
+                        .labelsHidden()
+                }
+            }
+            .padding(10)
+            .background(
+                RoundedRectangle(cornerRadius: 13, style: .continuous)
+                    .fill(accentIndigo.opacity(0.13))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 13, style: .continuous)
+                            .stroke(accentCyan.opacity(0.32), lineWidth: 1)
+                    )
+            )
+
             Text("OTONOM KORUMA & SİSTEM TERCİHLERİ")
-                .font(.system(size: 10.5, weight: .heavy, design: .rounded))
+                .font(.system(size: 10, weight: .heavy, design: .rounded))
                 .tracking(0.5)
                 .foregroundColor(accentCyan)
+                .padding(.top, 2)
 
-            VStack(spacing: 10) {
+            VStack(spacing: 7) {
                 settingToggleRow(
                     sysIcon: "bolt.badge.automatic.fill",
                     title: "Ajan Çalışırken Kalkanı Otomatik Aç",
@@ -1642,43 +1950,13 @@ struct ShieldControlPopoverView: View {
                     )
                 )
             }
-            .padding(13)
-            .background(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(Color.white.opacity(0.045))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .stroke(Color.white.opacity(0.07), lineWidth: 1)
-                    )
-            )
-
-            // Alt Bilgi Kartı (Tam Genişlik Hizalı)
-            HStack(spacing: 10) {
-                Image(systemName: "hand.tap.fill")
-                    .font(.system(size: 16, weight: .bold))
-                    .foregroundColor(accentCyan)
-                    .frame(width: 26)
-
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Hızlı İpucu: Sağ Tıkla Anında Aç / Kapat")
-                        .font(.system(size: 11, weight: .bold, design: .rounded))
-                        .foregroundColor(.white)
-                    Text("Sağ üst menü çubuğundaki Kalkan simgesine sağ tıklayarak (veya Option+Tık ile) pencereyi açmadan kalkanı değiştirebilirsiniz.")
-                        .font(.system(size: 10, weight: .medium, design: .rounded))
-                        .foregroundColor(.white.opacity(0.6))
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-
-                Spacer(minLength: 0)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(12)
+            .padding(11)
             .background(
                 RoundedRectangle(cornerRadius: 13, style: .continuous)
-                    .fill(accentIndigo.opacity(0.14))
+                    .fill(Color.white.opacity(0.045))
                     .overlay(
                         RoundedRectangle(cornerRadius: 13, style: .continuous)
-                            .stroke(accentIndigo.opacity(0.35), lineWidth: 1)
+                            .stroke(Color.white.opacity(0.07), lineWidth: 1)
                     )
             )
 
@@ -1686,20 +1964,93 @@ struct ShieldControlPopoverView: View {
         }
     }
 
+    private var updateStatusSubtitle: String {
+        switch engine.updateState {
+        case .idle:
+            return "GitHub OTA • \(engine.lastUpdateCheckText)"
+        case .checking:
+            return "GitHub üzerinden yeni sürüm kontrol ediliyor..."
+        case .upToDate:
+            return "En güncel sürümdesiniz • \(engine.lastUpdateCheckText)"
+        case .updateAvailable(let ver, _, let notes):
+            return "Yeni v\(ver) hazır: \(notes)"
+        case .installing(let step):
+            return step
+        case .failed(let err):
+            return err
+        }
+    }
+
+    private var updateStatusColor: Color {
+        switch engine.updateState {
+        case .updateAvailable, .installing:
+            return accentCyan
+        case .failed:
+            return Color.orange
+        default:
+            return Color.white.opacity(0.58)
+        }
+    }
+
+    @ViewBuilder
+    private var updateActionButton: some View {
+        switch engine.updateState {
+        case .checking, .installing:
+            Text("İşleniyor...")
+                .font(.system(size: 10, weight: .bold, design: .rounded))
+                .foregroundColor(accentCyan)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(Capsule().fill(Color.white.opacity(0.08)))
+        case .updateAvailable(let ver, _, _):
+            Button {
+                engine.performInAppUpdate()
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "arrow.down.to.line.compact")
+                        .font(.system(size: 10, weight: .bold))
+                    Text("v\(ver) Kur")
+                        .font(.system(size: 10, weight: .heavy, design: .rounded))
+                }
+                .foregroundColor(.black)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5.5)
+                .background(Capsule().fill(accentCyan))
+            }
+            .buttonStyle(.plain)
+        default:
+            Button {
+                engine.checkForUpdates(userInitiated: true)
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 9.5, weight: .bold))
+                    Text("Denetle")
+                        .font(.system(size: 10, weight: .bold, design: .rounded))
+                }
+                .foregroundColor(.white.opacity(0.9))
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(Capsule().fill(Color.white.opacity(0.10)))
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
     private func settingToggleRow(sysIcon: String, title: String, subtitle: String, isOn: Binding<Bool>) -> some View {
         HStack(spacing: 10) {
             Image(systemName: sysIcon)
-                .font(.system(size: 15, weight: .semibold))
+                .font(.system(size: 14, weight: .semibold))
                 .foregroundColor(accentCyan)
-                .frame(width: 24, alignment: .center)
+                .frame(width: 22, alignment: .center)
 
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: 1.5) {
                 Text(title)
-                    .font(.system(size: 12, weight: .bold, design: .rounded))
+                    .font(.system(size: 11.5, weight: .bold, design: .rounded))
                     .foregroundColor(.white)
                     .lineLimit(1)
                 Text(subtitle)
-                    .font(.system(size: 10, weight: .medium, design: .rounded))
+                    .font(.system(size: 9.5, weight: .medium, design: .rounded))
                     .foregroundColor(.white.opacity(0.55))
                     .lineLimit(1)
                     .minimumScaleFactor(0.85)
@@ -1709,9 +2060,10 @@ struct ShieldControlPopoverView: View {
 
             Toggle("", isOn: isOn)
                 .toggleStyle(.switch)
+                .controlSize(.small)
                 .labelsHidden()
         }
-        .frame(height: 36)
+        .frame(height: 31)
     }
 
     // MARK: - Alt Durum & Çıkış Çubuğu

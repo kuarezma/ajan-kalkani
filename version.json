@@ -1,0 +1,8 @@
+{
+  "version": "3.1.0",
+  "build": 310,
+  "released_at": "2026-10-21T00:22:00+03:00",
+  "download_url": "https://github.com/kuarezma/ajan-kalkani/releases/latest/download/AjanKalkani.app.zip",
+  "tarball_url": "https://github.com/kuarezma/ajan-kalkani/archive/refs/heads/main.tar.gz",
+  "notes": "Otomatik uygulama içi OTA güncelleme motoru (Auto-Updater), güncelleme sırasında aktif kalkan süresini koruma ve sıfır kaymalı sabit ızgara arayüzü."
+}
