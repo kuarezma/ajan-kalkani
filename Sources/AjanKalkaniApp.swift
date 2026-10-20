@@ -966,6 +966,7 @@ struct ShieldControlPopoverView: View {
                     .font(.system(size: 11, weight: .medium, design: .rounded))
                     .foregroundColor(.white.opacity(0.58))
                     .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
             }
 
             Spacer(minLength: 8)
