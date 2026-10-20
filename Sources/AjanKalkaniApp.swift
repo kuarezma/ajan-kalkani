@@ -50,9 +50,9 @@ enum ShieldMode: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .clamshellAgent: return "Kapak Kapalı Ajan"
-        case .fullPresentation: return "Kapak + Ekran Açık"
-        case .smartAgentWatch: return "Akıllı Ajan Gözcüsü"
+        case .clamshellAgent: return "Kapak Kapalı"
+        case .fullPresentation: return "Ekran da Açık"
+        case .smartAgentWatch: return "Ajan Gözcüsü"
         }
     }
 
@@ -67,11 +67,11 @@ enum ShieldMode: String, CaseIterable, Identifiable {
     var description: String {
         switch self {
         case .clamshellAgent:
-            return "Kapak kapansa bile CPU, Wi-Fi ve tüm Ajan/Terminaller tam hız çalışır; ekran kapanıp ısınmayı önler."
+            return "Kapak kapansa da CPU, Wi-Fi ve Ajanlar tam hız çalışır; ekran kapanıp ısınmayı önler."
         case .fullPresentation:
             return "Hem kapak uykusunu hem de ekranın kararmasını tamamen engeller."
         case .smartAgentWatch:
-            return "Kapak kapalı çalışır; izlenen tüm kodlama ve terminal ajanları bittiğinde uykuyu serbest bırakır."
+            return "İzlenen tüm kodlama ve terminal ajanları görevini bitirdiğinde uykuyu serbest bırakır."
         }
     }
 }
@@ -102,7 +102,7 @@ enum CodingAgentKind: String, CaseIterable, Identifiable {
         case .agy: return "AGY"
         case .agyTerminal: return "AGY Terminal"
         case .cursor: return "Cursor"
-        case .cursorAgentTerminal: return "Cursor Agent Terminal"
+        case .cursorAgentTerminal: return "Cursor Agent CLI"
         case .opencode: return "OpenCode"
         case .opencodeTerminal: return "OpenCode Terminal"
         case .deepseekHarness: return "DeepSeek Harness"
@@ -113,11 +113,11 @@ enum CodingAgentKind: String, CaseIterable, Identifiable {
     var categoryBadge: String {
         switch self {
         case .claudeCode, .codex, .agy, .cursor, .opencode, .deepseekHarness:
-            return "APP / IDE"
+            return "MASAÜSTÜ / IDE"
         case .claudeTerminal, .codexTerminal, .agyTerminal, .cursorAgentTerminal, .opencodeTerminal:
-            return "CLI / TTY"
+            return "TERMİNAL / CLI"
         case .terminalApps:
-            return "KABUK"
+            return "KABUK / TTY"
         }
     }
 
@@ -206,6 +206,7 @@ final class ShieldEngine: ObservableObject {
     @Published var selectedMode: ShieldMode = .clamshellAgent
     @Published var remainingSeconds: Int = 0
     @Published var totalSeconds: Int = 7200
+    @Published var currentTab: DashboardTab = .shield
 
     // Ayarlar
     @Published var showMenuBarTimer: Bool = true {
@@ -236,7 +237,7 @@ final class ShieldEngine: ObservableObject {
     }
     @Published var launchAtLogin: Bool = false
 
-    // İzlenen Ajan Filtresi (Akıllı Gözcü ve Otomatik Başlatma için)
+    // İzlenen Ajan Filtresi
     @Published var watchedAgentKinds: Set<CodingAgentKind> = Set(CodingAgentKind.allCases.filter { $0 != .terminalApps })
 
     // Canlı Sistem & Ajan Telemetrisi
@@ -244,7 +245,7 @@ final class ShieldEngine: ObservableObject {
     @Published var batteryLevel: Int = 100
     @Published var isCharging: Bool = true
     @Published var agentStatuses: [AgentRuntimeStatus] = CodingAgentKind.allCases.map {
-        AgentRuntimeStatus(kind: $0, instanceCount: 0, ttys: [], detail: "Kapalı")
+        AgentRuntimeStatus(kind: $0, instanceCount: 0, ttys: [], detail: "Beklemede")
     }
     @Published var statusMessage: String = "Kalkan hazır. Tek dokunuşla kapak korumasını başlatın."
 
@@ -255,25 +256,10 @@ final class ShieldEngine: ObservableObject {
     private var telemetryTimer: Timer?
     private var idleAgentEmptyCount: Int = 0
 
-    // Özet hesaplamalar
     var activeCodingAgentsCount: Int {
         agentStatuses
             .filter { $0.kind != .terminalApps && $0.isRunning }
             .reduce(0) { $0 + $1.instanceCount }
-    }
-
-    var activeCodingAgentTypesCount: Int {
-        agentStatuses.filter { $0.kind != .terminalApps && $0.isRunning }.count
-    }
-
-    var activeAgentShortNames: [String] {
-        agentStatuses
-            .filter { $0.kind != .terminalApps && $0.isRunning }
-            .map { status in
-                status.instanceCount > 1
-                    ? "\(status.kind.displayName) (\(status.instanceCount))"
-                    : status.kind.displayName
-            }
     }
 
     private init() {
@@ -305,7 +291,7 @@ final class ShieldEngine: ObservableObject {
     // MARK: - Başlat / Durdur / Süre Değiştir
     func toggleShield() {
         if isActive {
-            deactivateShield(reason: "Kullanıcı tarafından durduruldu.")
+            deactivateShield(reason: "Kalkan kullanıcı tarafından durduruldu.")
         } else {
             activateShield(duration: selectedDuration)
         }
@@ -323,8 +309,8 @@ final class ShieldEngine: ObservableObject {
         isActive = true
         hardwareSleepDisabled = pmsetOk
         statusMessage = duration == .infinite
-            ? "Kapak Kalkanı SÜRESİZ aktif. Kapağı güvenle kapatabilirsiniz."
-            : "Kapak Kalkanı \(duration.title) boyunca aktif."
+            ? "Kapak Kalkanı SÜRESİZ aktif • Kapağı kapatabilirsiniz"
+            : "Kapak Kalkanı \(duration.title) boyunca aktif • Kapağı kapatabilirsiniz"
 
         playSound(named: "Hero")
         startCountdownLoop()
@@ -353,8 +339,8 @@ final class ShieldEngine: ObservableObject {
             totalSeconds = duration.rawValue
             remainingSeconds = duration.rawValue
             statusMessage = duration == .infinite
-                ? "Süre SÜRESİZ olarak güncellendi. Kapağı kapatabilirsiniz."
-                : "Süre \(duration.title) olarak güncellendi."
+                ? "Süre SÜRESİZ olarak güncellendi • Kapağı kapatabilirsiniz"
+                : "Süre \(duration.title) olarak güncellendi • Kapağı kapatabilirsiniz"
             playSound(named: "Tink")
             onStatusBarUpdate?()
         } else {
@@ -462,7 +448,7 @@ final class ShieldEngine: ObservableObject {
                 remainingSeconds -= 1
                 onStatusBarUpdate?()
             } else {
-                deactivateShield(reason: "Seçilen süre tamamlandı, Mac normal uyku moduna döndü.")
+                deactivateShield(reason: "Süre tamamlandı, Mac normal uyku moduna döndü.")
                 sendUserNotification(
                     title: "Ajan Kalkanı Süresi Doldu",
                     body: "Seçtiğiniz koruma süresi tamamlandı. MacBook normal uyku moduna geri döndü."
@@ -472,7 +458,7 @@ final class ShieldEngine: ObservableObject {
         }
     }
 
-    // MARK: - Sistem & Ajan Telemetri Döngüsü (Her 3 saniyede bir sıfır-blokajlı radar taraması)
+    // MARK: - Sistem & Ajan Telemetri Döngüsü
     private func startTelemetryLoop() {
         telemetryTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) { [weak self] _ in
             Task { @MainActor in
@@ -495,7 +481,7 @@ final class ShieldEngine: ObservableObject {
         let batThreshold = batterySafetyThreshold
 
         if currentlyActive && batEnabled && !batCharging && batLevel <= batThreshold {
-            deactivateShield(reason: "Kritik pil koruması (%\(batLevel)): Veri kaybını önlemek için uyku kilidi açıldı.")
+            deactivateShield(reason: "Düşük pil koruması (%\(batLevel)): Uyku kilidi güvenle açıldı.")
             sendUserNotification(
                 title: "Düşük Pil Koruması Devrede",
                 body: "Pil seviyesi %\(batLevel) altına düştüğü için Kapak Kalkanı güvenle kapatıldı."
@@ -521,17 +507,15 @@ final class ShieldEngine: ObservableObject {
                     self.watchedAgentKinds.contains(status.kind) && status.isRunning
                 }
 
-                // Otomatik Ajan Kalkanı: İzlenen ajanlardan biri aktifse ve kalkan kapalıysa otomatik başlat
                 if !self.isActive && self.autoActivateOnAgent && watchedRunning {
                     self.activateShield(duration: self.selectedDuration)
                     self.statusMessage = "Aktif kodlama ajanı algılandı, kalkan otomatik açıldı."
                 }
 
-                // Akıllı Ajan Gözcüsü Modu: İzlenen ajanlar bittiğinde uykuyu serbest bırak
                 if self.isActive && currentMode == .smartAgentWatch {
                     if !watchedRunning {
                         self.idleAgentEmptyCount += 1
-                        if self.idleAgentEmptyCount >= 8 { // ~24 saniye boyunca hiç aktif ajan yoksa
+                        if self.idleAgentEmptyCount >= 8 {
                             self.deactivateShield(reason: "Tüm izlenen kodlama ajanları görevini tamamladı.")
                             self.sendUserNotification(
                                 title: "Kodlama Ajanları Tamamlandı",
@@ -567,7 +551,6 @@ final class ShieldEngine: ObservableObject {
 
         do {
             try proc.run()
-            // ÖNCE pipe okunur (64KB tampon kilitlenmesini %100 önler)
             let data = pipe.fileHandleForReading.readDataToEndOfFile()
             proc.waitUntilExit()
 
@@ -577,7 +560,6 @@ final class ShieldEngine: ObservableObject {
                     let line = rawLine.trimmingCharacters(in: .whitespaces)
                     guard !line.isEmpty else { continue }
 
-                    // Format: PID TTY COMM ARGS
                     let parts = line.split(separator: " ", maxSplits: 3, omittingEmptySubsequences: true)
                     guard parts.count >= 3 else { continue }
 
@@ -587,7 +569,6 @@ final class ShieldEngine: ObservableObject {
                     let lowerArgs = args.lowercased()
                     let lowerComm = (comm as NSString).lastPathComponent.lowercased()
 
-                    // Kendi alt süreçlerimizi ve sistem yardımcılarını hariç tut
                     if lowerArgs.contains("ajankalkani") || lowerArgs.contains("cursoruiviewservice") || lowerArgs.contains("claude code url handler") {
                         continue
                     }
@@ -601,7 +582,6 @@ final class ShieldEngine: ObservableObject {
                     if lowerArgs.contains("/claude.app/contents/macos/claude") {
                         counts[.claudeCode, default: 0] += 1
                     } else if lowerComm == "claude" || lowerArgs.contains("/.local/bin/claude") || lowerArgs.contains("/.local/share/claude/") || lowerArgs.contains("claude-science") {
-                        // /bin/sh wrapper ve gerçek binary çift sayılmasın diye wrapper satırını filtrele
                         if !lowerComm.hasSuffix("sh") && lowerComm != "script" {
                             counts[.claudeTerminal, default: 0] += 1
                             if hasRealTty { ttyMap[.claudeTerminal, default: []].insert(tty) }
@@ -660,10 +640,10 @@ final class ShieldEngine: ObservableObject {
                         }
                     }
 
-                    // 12: Terminal Uygulamaları (Terminal.app, iTerm2, Warp, Ghostty, Kitty, Alacritty, WezTerm, tmux, cmux)
+                    // 12: Terminal Uygulamaları
                     if lowerArgs.contains("/terminal.app/contents/macos/terminal") {
                         counts[.terminalApps, default: 0] += 1
-                        terminalNames.insert("macOS Terminal")
+                        terminalNames.insert("Terminal")
                     } else if lowerArgs.contains("/iterm.app/contents/macos/iterm2") {
                         counts[.terminalApps, default: 0] += 1
                         terminalNames.insert("iTerm2")
@@ -685,20 +665,23 @@ final class ShieldEngine: ObservableObject {
             let count = counts[kind] ?? 0
             let ttys = Array(ttyMap[kind] ?? []).sorted()
 
+            // Kısa, kesilmeyen, jilet gibi hizalı durum metinleri
             let detailText: String
             if kind == .terminalApps {
                 if count > 0 {
-                    let names = terminalNames.sorted().joined(separator: ", ")
-                    detailText = "\(names) • \(allTtys.count) TTY sekmesi"
+                    let names = terminalNames.sorted().joined(separator: "+")
+                    detailText = "\(names) • \(allTtys.count) TTY"
                 } else {
                     detailText = "Açık terminal yok"
                 }
             } else if count > 0 {
-                if !ttys.isEmpty {
-                    let ttyPreview = ttys.prefix(3).joined(separator: ", ")
-                    detailText = "\(count) oturum (\(ttyPreview))"
+                if ttys.count == 1, let first = ttys.first {
+                    detailText = "\(count) oturum (\(first))"
+                } else if ttys.count > 1, let first = ttys.first, let last = ttys.last {
+                    let shortLast = last.replacingOccurrences(of: "ttys", with: "")
+                    detailText = "\(count) oturum (\(first)..\(shortLast))"
                 } else {
-                    detailText = "\(count) aktif süreç çalışıyor"
+                    detailText = "\(count) aktif süreç"
                 }
             } else {
                 detailText = "Beklemede"
@@ -867,10 +850,9 @@ final class ShieldEngine: ObservableObject {
     }
 }
 
-// MARK: - Görsel Ana Arayüz (Glassmorphic Premium Popover & HUD)
+// MARK: - Görsel Ana Arayüz (Sıfır Kaymalı Sabit Izgara Tasarımı)
 struct ShieldControlPopoverView: View {
     @ObservedObject var engine: ShieldEngine
-    @State private var selectedTab: DashboardTab = .shield
     @State private var pulseAnimation: Bool = false
     @State private var ringRotation: Double = 0
     @State private var hoverPowerOrb: Bool = false
@@ -887,30 +869,30 @@ struct ShieldControlPopoverView: View {
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
             )
-            .ignoresSafeArea()
 
             Circle()
                 .fill(
                     RadialGradient(
                         colors: engine.isActive
-                            ? [accentCyan.opacity(0.22), accentIndigo.opacity(0.10), .clear]
-                            : [accentIndigo.opacity(0.09), .clear],
+                            ? [accentCyan.opacity(0.20), accentIndigo.opacity(0.09), .clear]
+                            : [accentIndigo.opacity(0.08), .clear],
                         center: .center,
                         startRadius: 10,
                         endRadius: 230
                     )
                 )
-                .frame(width: 400, height: 400)
-                .offset(y: -80)
-                .scaleEffect(pulseAnimation && engine.isActive ? 1.08 : 0.94)
+                .frame(width: 420, height: 420)
+                .offset(y: -85)
+                .scaleEffect(pulseAnimation && engine.isActive ? 1.06 : 0.95)
                 .animation(.easeInOut(duration: 2.6).repeatForever(autoreverses: true), value: pulseAnimation)
+                .allowsHitTesting(false)
 
             VStack(spacing: 12) {
                 headerBar
                 tabSelectorBar
 
-                Group {
-                    switch selectedTab {
+                ZStack(alignment: .top) {
+                    switch engine.currentTab {
                     case .shield:
                         mainDashboard
                     case .radar:
@@ -919,14 +901,16 @@ struct ShieldControlPopoverView: View {
                         settingsPanel
                     }
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
 
                 footerBar
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 14)
+            .padding(.horizontal, 18)
+            .padding(.top, 16)
+            .padding(.bottom, 14)
         }
-        .frame(width: 396, height: 600)
+        .frame(width: 436, height: 620)
+        .ignoresSafeArea()
         .preferredColorScheme(.dark)
         .onAppear {
             pulseAnimation = true
@@ -936,11 +920,11 @@ struct ShieldControlPopoverView: View {
         }
     }
 
-    // MARK: - Üst Başlık Barı
+    // MARK: - Üst Başlık Barı (Sıfır Kaymalı Simetrik Düzen)
     private var headerBar: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 11) {
             ZStack {
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                RoundedRectangle(cornerRadius: 11, style: .continuous)
                     .fill(
                         LinearGradient(
                             colors: engine.isActive
@@ -950,84 +934,100 @@ struct ShieldControlPopoverView: View {
                             endPoint: .bottomTrailing
                         )
                     )
-                    .frame(width: 34, height: 34)
+                    .frame(width: 38, height: 38)
                     .shadow(color: engine.isActive ? accentCyan.opacity(0.45) : .clear, radius: 8)
 
                 Image(systemName: engine.isActive ? "bolt.shield.fill" : "shield.lefthalf.filled")
-                    .font(.system(size: 17, weight: .bold))
-                    .foregroundColor(engine.isActive ? .black : .white.opacity(0.85))
+                    .font(.system(size: 18, weight: .bold))
+                    .foregroundColor(engine.isActive ? .black : .white.opacity(0.9))
             }
 
-            VStack(alignment: .leading, spacing: 1) {
-                HStack(spacing: 6) {
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 7) {
                     Text("AJAN KALKANI")
-                        .font(.system(size: 13, weight: .heavy, design: .rounded))
-                        .tracking(0.8)
+                        .font(.system(size: 14, weight: .heavy, design: .rounded))
+                        .tracking(0.6)
                         .foregroundColor(.white)
+                        .fixedSize()
 
                     Text(engine.isActive ? "KORUMA AKTİF" : "BEKLEMEDE")
-                        .font(.system(size: 8.5, weight: .black, design: .rounded))
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
+                        .font(.system(size: 9, weight: .black, design: .rounded))
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 2.5)
                         .background(
                             Capsule()
-                                .fill(engine.isActive ? accentCyan.opacity(0.22) : Color.white.opacity(0.08))
+                                .fill(engine.isActive ? accentCyan.opacity(0.22) : Color.white.opacity(0.09))
                         )
-                        .foregroundColor(engine.isActive ? accentCyan : .white.opacity(0.55))
+                        .foregroundColor(engine.isActive ? accentCyan : .white.opacity(0.6))
+                        .fixedSize()
                 }
 
                 Text("Otonom Kodlama & Terminal Uyku Koruyucu")
-                    .font(.system(size: 10.5, weight: .medium, design: .rounded))
-                    .foregroundColor(.white.opacity(0.55))
+                    .font(.system(size: 11, weight: .medium, design: .rounded))
+                    .foregroundColor(.white.opacity(0.58))
+                    .lineLimit(1)
             }
 
-            Spacer()
+            Spacer(minLength: 8)
 
-            // Sağ Üst Menü Çubuğuna Küçült butonu
+            // Sağ Üst Menü Çubuğuna Küçült / Gizle butonu
             Button {
                 NSApp.keyWindow?.orderOut(nil)
             } label: {
-                Image(systemName: "menubar.arrow.up.rectangle")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(accentCyan)
-                    .frame(width: 28, height: 28)
-                    .background(Circle().fill(accentCyan.opacity(0.12)))
+                HStack(spacing: 4) {
+                    Image(systemName: "menubar.arrow.up.rectangle")
+                        .font(.system(size: 12, weight: .bold))
+                    Text("Gizle")
+                        .font(.system(size: 10.5, weight: .bold, design: .rounded))
+                }
+                .foregroundColor(accentCyan)
+                .padding(.horizontal, 9)
+                .padding(.vertical, 6)
+                .background(
+                    Capsule()
+                        .fill(accentCyan.opacity(0.13))
+                        .overlay(Capsule().stroke(accentCyan.opacity(0.35), lineWidth: 1))
+                )
             }
             .buttonStyle(.plain)
             .help("Pencereyi gizle (Sağ üst menü çubuğundan her an açabilirsiniz)")
         }
+        .frame(height: 40)
     }
 
-    // MARK: - 3'lü Sekme Çubuğu (Kalkan | Ajan Radarı | Ayarlar)
+    // MARK: - 3'lü Sekme Çubuğu (Sabit Genişlikli & Titremesiz)
     private var tabSelectorBar: some View {
         HStack(spacing: 6) {
             ForEach(DashboardTab.allCases) { tab in
-                let isSelected = (selectedTab == tab)
+                let isSelected = (engine.currentTab == tab)
                 Button {
-                    withAnimation(.spring(response: 0.28, dampingFraction: 0.8)) {
-                        selectedTab = tab
+                    withAnimation(.spring(response: 0.25, dampingFraction: 0.82)) {
+                        engine.currentTab = tab
                     }
                 } label: {
                     HStack(spacing: 5) {
                         Image(systemName: tab.icon)
-                            .font(.system(size: 11, weight: .bold))
+                            .font(.system(size: 11.5, weight: .bold))
                         Text(tab.rawValue)
-                            .font(.system(size: 11, weight: isSelected ? .heavy : .semibold, design: .rounded))
+                            .font(.system(size: 11.5, weight: isSelected ? .heavy : .semibold, design: .rounded))
+                            .lineLimit(1)
+                            .fixedSize()
 
                         if tab == .radar {
                             Text("\(engine.activeCodingAgentsCount)")
                                 .font(.system(size: 9.5, weight: .black, design: .monospaced))
-                                .padding(.horizontal, 5)
+                                .frame(minWidth: 18)
+                                .padding(.horizontal, 4)
                                 .padding(.vertical, 1.5)
                                 .background(
                                     Capsule()
                                         .fill(engine.activeCodingAgentsCount > 0 ? accentCyan : Color.white.opacity(0.15))
                                 )
-                                .foregroundColor(engine.activeCodingAgentsCount > 0 ? .black : .white.opacity(0.7))
+                                .foregroundColor(engine.activeCodingAgentsCount > 0 ? .black : .white.opacity(0.75))
                         }
                     }
                     .frame(maxWidth: .infinity)
-                    .padding(.vertical, 6.5)
+                    .frame(height: 30)
                     .background(
                         RoundedRectangle(cornerRadius: 9, style: .continuous)
                             .fill(isSelected ? Color.white.opacity(0.12) : Color.clear)
@@ -1036,7 +1036,7 @@ struct ShieldControlPopoverView: View {
                         RoundedRectangle(cornerRadius: 9, style: .continuous)
                             .stroke(isSelected ? accentCyan.opacity(0.45) : Color.clear, lineWidth: 1)
                     )
-                    .foregroundColor(isSelected ? .white : .white.opacity(0.6))
+                    .foregroundColor(isSelected ? .white : .white.opacity(0.62))
                 }
                 .buttonStyle(.plain)
             }
@@ -1047,14 +1047,14 @@ struct ShieldControlPopoverView: View {
                 .fill(Color.white.opacity(0.04))
                 .overlay(
                     RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .stroke(Color.white.opacity(0.06), lineWidth: 1)
+                        .stroke(Color.white.opacity(0.07), lineWidth: 1)
                 )
         )
     }
 
     // MARK: - SEKME 1: Ana Kalkan Kontrol Paneli
     private var mainDashboard: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: 11) {
             powerOrbSection
             durationSelectorSection
             modeSelectorSection
@@ -1064,171 +1064,194 @@ struct ShieldControlPopoverView: View {
 
     // MARK: - Merkezdeki Nefes Alan Tek Tuş Güç Küresi (Power Orb)
     private var powerOrbSection: some View {
-        VStack(spacing: 8) {
-            ZStack {
-                Circle()
-                    .stroke(Color.white.opacity(0.06), lineWidth: 9)
-                    .frame(width: 136, height: 136)
-
-                if engine.isActive {
-                    Circle()
-                        .trim(from: 0.0, to: CGFloat(max(0.04, engine.progressFraction)))
-                        .stroke(
-                            AngularGradient(
-                                gradient: Gradient(colors: [accentCyan, accentIndigo, accentCyan]),
-                                center: .center
-                            ),
-                            style: StrokeStyle(lineWidth: 9, lineCap: .round)
-                        )
-                        .frame(width: 136, height: 136)
-                        .rotationEffect(.degrees(-90))
-                        .shadow(color: accentCyan.opacity(0.55), radius: 10)
-                        .animation(.easeInOut(duration: 0.4), value: engine.progressFraction)
-
-                    Circle()
-                        .strokeBorder(
-                            AngularGradient(
-                                gradient: Gradient(colors: [.clear, accentCyan.opacity(0.6), .clear, accentIndigo.opacity(0.6), .clear]),
-                                center: .center
-                            ),
-                            lineWidth: 2
-                        )
-                        .frame(width: 152, height: 152)
-                        .rotationEffect(.degrees(ringRotation))
-                }
-
+        VStack(spacing: 6) {
+            HStack(spacing: 18) {
+                // Sol Hızlı Süre Azalt (-15 dk) — Sabit genişlikli alan (Küre asla sağa/sola kaymaz!)
                 Button {
-                    withAnimation(.spring(response: 0.35, dampingFraction: 0.72)) {
-                        engine.toggleShield()
-                    }
+                    engine.addMinutes(-15)
                 } label: {
-                    ZStack {
-                        Circle()
-                            .fill(
-                                LinearGradient(
-                                    colors: engine.isActive
-                                        ? [Color(red: 0.08, green: 0.25, blue: 0.28), Color(red: 0.07, green: 0.11, blue: 0.22)]
-                                        : [Color.white.opacity(0.08), Color.white.opacity(0.03)],
-                                    startPoint: .topLeading,
-                                    endPoint: .bottomTrailing
-                                )
-                            )
-                            .frame(width: 112, height: 112)
-                            .overlay(
-                                Circle()
-                                    .stroke(
-                                        LinearGradient(
-                                            colors: engine.isActive
-                                                ? [accentCyan.opacity(0.8), accentIndigo.opacity(0.5)]
-                                                : [Color.white.opacity(0.2), Color.white.opacity(0.05)],
-                                            startPoint: .topLeading,
-                                            endPoint: .bottomTrailing
-                                        ),
-                                        lineWidth: 1.5
-                                    )
-                            )
-                            .shadow(
-                                color: engine.isActive ? accentCyan.opacity(0.35) : .black.opacity(0.4),
-                                radius: hoverPowerOrb ? 18 : 10
-                            )
-
-                        VStack(spacing: 3) {
-                            Image(systemName: engine.isActive ? "lock.laptopcomputer" : "power")
-                                .font(.system(size: 25, weight: .bold))
-                                .foregroundStyle(
-                                    engine.isActive
-                                        ? LinearGradient(colors: [accentCyan, .white], startPoint: .top, endPoint: .bottom)
-                                        : LinearGradient(colors: [.white.opacity(0.85), .white.opacity(0.45)], startPoint: .top, endPoint: .bottom)
-                                )
-
-                            Text(engine.formattedRemainingTime)
-                                .font(.system(size: 15, weight: .black, design: .monospaced))
-                                .foregroundColor(engine.isActive ? .white : .white.opacity(0.55))
-
-                            Text(engine.isActive ? "DURDURMAK İÇİN DOKUN" : "BAŞLATMAK İÇİN DOKUN")
-                                .font(.system(size: 7.2, weight: .bold, design: .rounded))
-                                .tracking(0.5)
-                                .foregroundColor(engine.isActive ? accentCyan : .white.opacity(0.4))
-                        }
+                    HStack(spacing: 2) {
+                        Image(systemName: "minus")
+                            .font(.system(size: 9, weight: .black))
+                        Text("15 dk")
+                            .font(.system(size: 11, weight: .bold, design: .rounded))
                     }
-                    .scaleEffect(hoverPowerOrb ? 1.04 : 1.0)
+                    .foregroundColor(.white.opacity(0.85))
+                    .frame(width: 68, height: 30)
+                    .background(
+                        Capsule()
+                            .fill(Color.white.opacity(0.08))
+                            .overlay(Capsule().stroke(Color.white.opacity(0.12), lineWidth: 1))
+                    )
                 }
                 .buttonStyle(.plain)
-                .onHover { hovering in
-                    withAnimation(.easeOut(duration: 0.18)) {
-                        hoverPowerOrb = hovering
+                .opacity(engine.isActive && engine.selectedDuration != .infinite ? 1.0 : 0.0)
+                .disabled(!(engine.isActive && engine.selectedDuration != .infinite))
+
+                // Merkezdeki Güç Küresi
+                ZStack {
+                    Circle()
+                        .stroke(Color.white.opacity(0.06), lineWidth: 8)
+                        .frame(width: 132, height: 132)
+
+                    if engine.isActive {
+                        Circle()
+                            .trim(from: 0.0, to: CGFloat(max(0.04, engine.progressFraction)))
+                            .stroke(
+                                AngularGradient(
+                                    gradient: Gradient(colors: [accentCyan, accentIndigo, accentCyan]),
+                                    center: .center
+                                ),
+                                style: StrokeStyle(lineWidth: 8, lineCap: .round)
+                            )
+                            .frame(width: 132, height: 132)
+                            .rotationEffect(.degrees(-90))
+                            .shadow(color: accentCyan.opacity(0.5), radius: 8)
+                            .animation(.easeInOut(duration: 0.4), value: engine.progressFraction)
+
+                        Circle()
+                            .strokeBorder(
+                                AngularGradient(
+                                    gradient: Gradient(colors: [.clear, accentCyan.opacity(0.6), .clear, accentIndigo.opacity(0.6), .clear]),
+                                    center: .center
+                                ),
+                                lineWidth: 1.8
+                            )
+                            .frame(width: 146, height: 146)
+                            .rotationEffect(.degrees(ringRotation))
+                    }
+
+                    Button {
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
+                            engine.toggleShield()
+                        }
+                    } label: {
+                        ZStack {
+                            Circle()
+                                .fill(
+                                    LinearGradient(
+                                        colors: engine.isActive
+                                            ? [Color(red: 0.08, green: 0.25, blue: 0.28), Color(red: 0.07, green: 0.11, blue: 0.22)]
+                                            : [Color.white.opacity(0.08), Color.white.opacity(0.03)],
+                                        startPoint: .topLeading,
+                                        endPoint: .bottomTrailing
+                                    )
+                                )
+                                .frame(width: 112, height: 112)
+                                .overlay(
+                                    Circle()
+                                        .stroke(
+                                            LinearGradient(
+                                                colors: engine.isActive
+                                                    ? [accentCyan.opacity(0.8), accentIndigo.opacity(0.5)]
+                                                    : [Color.white.opacity(0.2), Color.white.opacity(0.05)],
+                                                startPoint: .topLeading,
+                                                endPoint: .bottomTrailing
+                                            ),
+                                            lineWidth: 1.5
+                                        )
+                                )
+                                .shadow(
+                                    color: engine.isActive ? accentCyan.opacity(0.32) : .black.opacity(0.4),
+                                    radius: hoverPowerOrb ? 16 : 8
+                                )
+
+                            VStack(spacing: 3) {
+                                Image(systemName: engine.isActive ? "lock.laptopcomputer" : "power")
+                                    .font(.system(size: 22, weight: .bold))
+                                    .foregroundStyle(
+                                        engine.isActive
+                                            ? LinearGradient(colors: [accentCyan, .white], startPoint: .top, endPoint: .bottom)
+                                            : LinearGradient(colors: [.white.opacity(0.85), .white.opacity(0.45)], startPoint: .top, endPoint: .bottom)
+                                    )
+
+                                Text(engine.formattedRemainingTime)
+                                    .font(.system(size: 14.5, weight: .black, design: .monospaced))
+                                    .foregroundColor(engine.isActive ? .white : .white.opacity(0.6))
+                                    .lineLimit(1)
+                                    .minimumScaleFactor(0.8)
+                                    .frame(width: 86)
+
+                                Text(engine.isActive ? "DURDUR" : "BAŞLAT")
+                                    .font(.system(size: 8.5, weight: .heavy, design: .rounded))
+                                    .tracking(0.8)
+                                    .foregroundColor(engine.isActive ? accentCyan : .white.opacity(0.45))
+                            }
+                        }
+                        .scaleEffect(hoverPowerOrb ? 1.03 : 1.0)
+                    }
+                    .buttonStyle(.plain)
+                    .onHover { hovering in
+                        withAnimation(.easeOut(duration: 0.18)) {
+                            hoverPowerOrb = hovering
+                        }
                     }
                 }
+                .frame(width: 150, height: 150)
 
-                if engine.isActive && engine.selectedDuration != .infinite {
-                    HStack {
-                        Button {
-                            engine.addMinutes(-15)
-                        } label: {
-                            Text("-15d")
-                                .font(.system(size: 10, weight: .bold, design: .rounded))
-                                .foregroundColor(.white.opacity(0.75))
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 5)
-                                .background(Capsule().fill(Color.white.opacity(0.08)))
-                        }
-                        .buttonStyle(.plain)
-
-                        Spacer()
-
-                        Button {
-                            engine.addMinutes(15)
-                        } label: {
-                            Text("+15d")
-                                .font(.system(size: 10, weight: .bold, design: .rounded))
-                                .foregroundColor(accentCyan)
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 5)
-                                .background(Capsule().fill(accentCyan.opacity(0.14)))
-                        }
-                        .buttonStyle(.plain)
+                // Sağ Hızlı Süre Artır (+15 dk) — Sabit genişlikli alan
+                Button {
+                    engine.addMinutes(15)
+                } label: {
+                    HStack(spacing: 2) {
+                        Image(systemName: "plus")
+                            .font(.system(size: 9, weight: .black))
+                        Text("15 dk")
+                            .font(.system(size: 11, weight: .bold, design: .rounded))
                     }
-                    .padding(.horizontal, 8)
+                    .foregroundColor(accentCyan)
+                    .frame(width: 68, height: 30)
+                    .background(
+                        Capsule()
+                            .fill(accentCyan.opacity(0.14))
+                            .overlay(Capsule().stroke(accentCyan.opacity(0.35), lineWidth: 1))
+                    )
                 }
+                .buttonStyle(.plain)
+                .opacity(engine.isActive && engine.selectedDuration != .infinite ? 1.0 : 0.0)
+                .disabled(!(engine.isActive && engine.selectedDuration != .infinite))
             }
-            .frame(height: 152)
 
             Text(engine.statusMessage)
-                .font(.system(size: 10.5, weight: .medium, design: .rounded))
-                .foregroundColor(engine.isActive ? accentCyan.opacity(0.95) : .white.opacity(0.6))
-                .multilineTextAlignment(.center)
+                .font(.system(size: 11, weight: .semibold, design: .rounded))
+                .foregroundColor(engine.isActive ? accentCyan.opacity(0.95) : .white.opacity(0.62))
                 .lineLimit(1)
+                .minimumScaleFactor(0.85)
+                .frame(maxWidth: .infinity)
+                .frame(height: 16)
         }
     }
 
     // MARK: - Süre Seçici Haplar
     private var durationSelectorSection: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 7) {
             HStack {
                 Label("AÇIK KALMA SÜRESİ", systemImage: "timer")
-                    .font(.system(size: 9.5, weight: .bold, design: .rounded))
-                    .tracking(0.6)
-                    .foregroundColor(.white.opacity(0.55))
+                    .font(.system(size: 10, weight: .heavy, design: .rounded))
+                    .tracking(0.5)
+                    .foregroundColor(.white.opacity(0.6))
 
                 Spacer()
 
                 Text(engine.selectedDuration.subtitle)
-                    .font(.system(size: 9.5, weight: .medium, design: .rounded))
-                    .foregroundColor(accentCyan.opacity(0.85))
+                    .font(.system(size: 10, weight: .semibold, design: .rounded))
+                    .foregroundColor(accentCyan.opacity(0.9))
+                    .lineLimit(1)
             }
 
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 4), spacing: 6) {
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 7), count: 4), spacing: 7) {
                 ForEach(ShieldDuration.allCases) { duration in
                     let isSelected = (engine.selectedDuration == duration)
                     Button {
-                        withAnimation(.spring(response: 0.25, dampingFraction: 0.75)) {
+                        withAnimation(.spring(response: 0.25, dampingFraction: 0.78)) {
                             engine.selectDuration(duration)
                         }
                     } label: {
                         Text(duration.title)
-                            .font(.system(size: 11, weight: isSelected ? .heavy : .semibold, design: .rounded))
+                            .font(.system(size: 11.5, weight: isSelected ? .heavy : .semibold, design: .rounded))
+                            .lineLimit(1)
                             .frame(maxWidth: .infinity)
-                            .padding(.vertical, 6.5)
+                            .frame(height: 29)
                             .background(
                                 RoundedRectangle(cornerRadius: 8, style: .continuous)
                                     .fill(
@@ -1241,24 +1264,25 @@ struct ShieldControlPopoverView: View {
                                 RoundedRectangle(cornerRadius: 8, style: .continuous)
                                     .stroke(isSelected ? Color.white.opacity(0.35) : Color.white.opacity(0.07), lineWidth: 1)
                             )
-                            .foregroundColor(isSelected ? .black : .white.opacity(0.85))
+                            .foregroundColor(isSelected ? .black : .white.opacity(0.88))
                     }
                     .buttonStyle(.plain)
                 }
 
                 Button {
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.78)) {
                         engine.activateShield(duration: engine.selectedDuration)
                     }
                 } label: {
-                    HStack(spacing: 3) {
+                    HStack(spacing: 4) {
                         Image(systemName: "bolt.fill")
-                            .font(.system(size: 9.5, weight: .bold))
+                            .font(.system(size: 10, weight: .bold))
                         Text("Şimdi")
-                            .font(.system(size: 11, weight: .bold, design: .rounded))
+                            .font(.system(size: 11.5, weight: .bold, design: .rounded))
+                            .lineLimit(1)
                     }
                     .frame(maxWidth: .infinity)
-                    .padding(.vertical, 6.5)
+                    .frame(height: 29)
                     .background(
                         RoundedRectangle(cornerRadius: 8, style: .continuous)
                             .fill(accentCyan.opacity(0.16))
@@ -1272,7 +1296,7 @@ struct ShieldControlPopoverView: View {
                 .buttonStyle(.plain)
             }
         }
-        .padding(10)
+        .padding(11)
         .background(
             RoundedRectangle(cornerRadius: 13, style: .continuous)
                 .fill(Color.white.opacity(0.04))
@@ -1283,46 +1307,49 @@ struct ShieldControlPopoverView: View {
         )
     }
 
-    // MARK: - Çalışma Modu Seçici
+    // MARK: - Çalışma Modu Seçici (Sabit Yüksekli Açıklama Alanı — Zıplama Yok)
     private var modeSelectorSection: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 6) {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(spacing: 7) {
                 ForEach(ShieldMode.allCases) { mode in
                     let isSelected = (engine.selectedMode == mode)
                     Button {
-                        withAnimation(.spring(response: 0.28, dampingFraction: 0.8)) {
+                        withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
                             engine.selectMode(mode)
                         }
                     } label: {
-                        VStack(spacing: 3) {
+                        HStack(spacing: 5) {
                             Image(systemName: mode.icon)
-                                .font(.system(size: 12.5, weight: .bold))
+                                .font(.system(size: 12, weight: .bold))
                             Text(mode.title)
-                                .font(.system(size: 9.5, weight: .bold, design: .rounded))
+                                .font(.system(size: 10.5, weight: .bold, design: .rounded))
                                 .lineLimit(1)
+                                .minimumScaleFactor(0.85)
                         }
                         .frame(maxWidth: .infinity)
-                        .padding(.vertical, 6)
+                        .frame(height: 32)
                         .background(
                             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                .fill(isSelected ? accentIndigo.opacity(0.32) : Color.white.opacity(0.04))
+                                .fill(isSelected ? accentIndigo.opacity(0.34) : Color.white.opacity(0.04))
                         )
                         .overlay(
                             RoundedRectangle(cornerRadius: 8, style: .continuous)
                                 .stroke(isSelected ? accentCyan.opacity(0.65) : Color.white.opacity(0.07), lineWidth: 1)
                         )
-                        .foregroundColor(isSelected ? .white : .white.opacity(0.6))
+                        .foregroundColor(isSelected ? .white : .white.opacity(0.65))
                     }
                     .buttonStyle(.plain)
                 }
             }
 
             Text(engine.selectedMode.description)
-                .font(.system(size: 9.5, weight: .medium, design: .rounded))
-                .foregroundColor(.white.opacity(0.55))
-                .fixedSize(horizontal: false, vertical: true)
+                .font(.system(size: 10, weight: .medium, design: .rounded))
+                .foregroundColor(.white.opacity(0.6))
+                .lineLimit(2)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(height: 26, alignment: .topLeading)
         }
-        .padding(10)
+        .padding(11)
         .background(
             RoundedRectangle(cornerRadius: 13, style: .continuous)
                 .fill(Color.white.opacity(0.04))
@@ -1333,16 +1360,16 @@ struct ShieldControlPopoverView: View {
         )
     }
 
-    // MARK: - Canlı Ajan & Terminal Hızlı Durum Kartı (Tıklayınca Ajan Radarına Gider)
+    // MARK: - Canlı Ajan & Terminal Hızlı Durum Kartı
     private var activeAgentsQuickStrip: some View {
         Button {
-            withAnimation(.spring(response: 0.28, dampingFraction: 0.8)) {
-                selectedTab = .radar
+            withAnimation(.spring(response: 0.28, dampingFraction: 0.82)) {
+                engine.currentTab = .radar
             }
         } label: {
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 7) {
                 HStack {
-                    HStack(spacing: 5) {
+                    HStack(spacing: 6) {
                         Circle()
                             .fill(engine.activeCodingAgentsCount > 0 ? accentCyan : Color.white.opacity(0.25))
                             .frame(width: 7, height: 7)
@@ -1353,74 +1380,80 @@ struct ShieldControlPopoverView: View {
                                 ? "CANLI RADAR: \(engine.activeCodingAgentsCount) Ajan Oturumu Çalışıyor"
                                 : "CANLI RADAR: Aktif Kodlama Ajanı Yok"
                         )
-                        .font(.system(size: 10, weight: .heavy, design: .rounded))
+                        .font(.system(size: 10.5, weight: .heavy, design: .rounded))
                         .foregroundColor(.white)
+                        .lineLimit(1)
                     }
 
                     Spacer()
 
                     HStack(spacing: 3) {
                         Text("Tümünü Gör")
-                            .font(.system(size: 9.5, weight: .bold, design: .rounded))
+                            .font(.system(size: 10, weight: .bold, design: .rounded))
                         Image(systemName: "chevron.right")
-                            .font(.system(size: 8.5, weight: .bold))
+                            .font(.system(size: 9, weight: .bold))
                     }
                     .foregroundColor(accentCyan)
                 }
 
-                // Aktif olanların renkli rozetleri
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 6) {
-                        ForEach(engine.agentStatuses.filter { $0.isRunning }) { status in
-                            HStack(spacing: 4) {
-                                Image(systemName: status.kind.icon)
-                                    .font(.system(size: 9.5, weight: .bold))
-                                    .foregroundColor(status.kind.color)
-                                Text(status.kind.displayName)
-                                    .font(.system(size: 9.5, weight: .bold, design: .rounded))
-                                    .foregroundColor(.white.opacity(0.9))
-                                if status.instanceCount > 1 {
+                        let runningList = engine.agentStatuses.filter { $0.isRunning }
+                        if runningList.isEmpty {
+                            Text("Herhangi bir ajan veya terminal başladığında burada canlı listelenir.")
+                                .font(.system(size: 10, weight: .medium, design: .rounded))
+                                .foregroundColor(.white.opacity(0.45))
+                        } else {
+                            ForEach(runningList) { status in
+                                HStack(spacing: 4) {
+                                    Image(systemName: status.kind.icon)
+                                        .font(.system(size: 9.5, weight: .bold))
+                                        .foregroundColor(status.kind.color)
+                                    Text(status.kind.displayName)
+                                        .font(.system(size: 10, weight: .bold, design: .rounded))
+                                        .foregroundColor(.white.opacity(0.92))
                                     Text("×\(status.instanceCount)")
-                                        .font(.system(size: 9, weight: .black, design: .monospaced))
+                                        .font(.system(size: 9.5, weight: .black, design: .monospaced))
                                         .foregroundColor(status.kind.color)
                                 }
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(
+                                    Capsule()
+                                        .fill(status.kind.color.opacity(0.14))
+                                        .overlay(Capsule().stroke(status.kind.color.opacity(0.35), lineWidth: 0.8))
+                                )
                             }
-                            .padding(.horizontal, 7)
-                            .padding(.vertical, 3.5)
-                            .background(
-                                Capsule()
-                                    .fill(status.kind.color.opacity(0.14))
-                                    .overlay(Capsule().stroke(status.kind.color.opacity(0.35), lineWidth: 0.8))
-                            )
                         }
                     }
                 }
+                .frame(height: 24)
             }
-            .padding(9)
+            .padding(10)
             .background(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                RoundedRectangle(cornerRadius: 13, style: .continuous)
                     .fill(Color.white.opacity(0.04))
                     .overlay(
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .stroke(engine.activeCodingAgentsCount > 0 ? accentCyan.opacity(0.3) : Color.white.opacity(0.07), lineWidth: 1)
+                        RoundedRectangle(cornerRadius: 13, style: .continuous)
+                            .stroke(engine.activeCodingAgentsCount > 0 ? accentCyan.opacity(0.32) : Color.white.opacity(0.07), lineWidth: 1)
                     )
             )
         }
         .buttonStyle(.plain)
     }
 
-    // MARK: - SEKME 2: 12'li Ajan & Terminal Radar Matrisi
+    // MARK: - SEKME 2: 12'li Ajan & Terminal Radar Matrisi (Sıfır Kesilmeli Kartlar)
     private var agentRadarMatrixView: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 9) {
             HStack {
-                VStack(alignment: .leading, spacing: 1) {
+                VStack(alignment: .leading, spacing: 2) {
                     Text("KODLAMA AJANLARI & TERMİNAL HAVUZU")
-                        .font(.system(size: 10, weight: .heavy, design: .rounded))
-                        .tracking(0.6)
+                        .font(.system(size: 10.5, weight: .heavy, design: .rounded))
+                        .tracking(0.5)
                         .foregroundColor(accentCyan)
-                    Text("İzlemek için karta dokunun • Çift/Ok simgesiyle uygulamayı açın")
-                        .font(.system(size: 9.5, weight: .medium, design: .rounded))
-                        .foregroundColor(.white.opacity(0.5))
+                    Text("Göz simgesiyle izlemeye alın • Ok simgesiyle uygulamayı açın")
+                        .font(.system(size: 10, weight: .medium, design: .rounded))
+                        .foregroundColor(.white.opacity(0.55))
                 }
 
                 Spacer()
@@ -1430,25 +1463,22 @@ struct ShieldControlPopoverView: View {
                 } label: {
                     HStack(spacing: 4) {
                         Image(systemName: "arrow.clockwise")
-                            .font(.system(size: 9.5, weight: .bold))
-                        Text("Tara")
-                            .font(.system(size: 9.5, weight: .bold, design: .rounded))
+                            .font(.system(size: 10, weight: .bold))
+                        Text("Şimdi Tara")
+                            .font(.system(size: 10, weight: .bold, design: .rounded))
                     }
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(Capsule().fill(Color.white.opacity(0.08)))
-                    .foregroundColor(.white.opacity(0.85))
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 5)
+                    .background(Capsule().fill(Color.white.opacity(0.09)))
+                    .foregroundColor(.white.opacity(0.9))
                 }
                 .buttonStyle(.plain)
             }
 
-            ScrollView(.vertical, showsIndicators: false) {
-                LazyVGrid(columns: [GridItem(.flexible(), spacing: 7), GridItem(.flexible(), spacing: 7)], spacing: 7) {
-                    ForEach(engine.agentStatuses) { status in
-                        agentRadarCard(status)
-                    }
+            LazyVGrid(columns: [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)], spacing: 7) {
+                ForEach(engine.agentStatuses) { status in
+                    agentRadarCard(status)
                 }
-                .padding(.vertical, 2)
             }
         }
     }
@@ -1456,7 +1486,7 @@ struct ShieldControlPopoverView: View {
     private func agentRadarCard(_ status: AgentRuntimeStatus) -> some View {
         let isWatched = engine.watchedAgentKinds.contains(status.kind)
         return VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 6) {
+            HStack(spacing: 7) {
                 ZStack {
                     RoundedRectangle(cornerRadius: 7, style: .continuous)
                         .fill(status.isRunning ? status.kind.color.opacity(0.22) : Color.white.opacity(0.06))
@@ -1464,198 +1494,223 @@ struct ShieldControlPopoverView: View {
 
                     Image(systemName: status.kind.icon)
                         .font(.system(size: 12, weight: .bold))
-                        .foregroundColor(status.isRunning ? status.kind.color : .white.opacity(0.4))
+                        .foregroundColor(status.isRunning ? status.kind.color : .white.opacity(0.42))
                 }
 
                 VStack(alignment: .leading, spacing: 1) {
                     Text(status.kind.displayName)
-                        .font(.system(size: 10.5, weight: .bold, design: .rounded))
-                        .foregroundColor(status.isRunning ? .white : .white.opacity(0.65))
+                        .font(.system(size: 11, weight: .bold, design: .rounded))
+                        .foregroundColor(status.isRunning ? .white : .white.opacity(0.72))
                         .lineLimit(1)
+                        .minimumScaleFactor(0.82)
 
                     Text(status.kind.categoryBadge)
                         .font(.system(size: 7.5, weight: .heavy, design: .monospaced))
-                        .foregroundColor(status.kind.color.opacity(0.85))
+                        .foregroundColor(status.kind.color.opacity(0.88))
+                        .lineLimit(1)
                 }
 
                 Spacer(minLength: 2)
 
-                // Aktif oturum sayısı rozeti
                 if status.isRunning {
                     Text("×\(status.instanceCount)")
                         .font(.system(size: 10, weight: .black, design: .monospaced))
-                        .padding(.horizontal, 5.5)
+                        .padding(.horizontal, 6)
                         .padding(.vertical, 2)
                         .background(Capsule().fill(status.kind.color))
                         .foregroundColor(.black)
+                        .fixedSize()
                 } else {
                     Circle()
-                        .fill(Color.white.opacity(0.15))
+                        .fill(Color.white.opacity(0.16))
                         .frame(width: 7, height: 7)
                 }
             }
 
-            HStack {
+            HStack(spacing: 5) {
                 Text(status.detail)
-                    .font(.system(size: 9, weight: .medium, design: .rounded))
-                    .foregroundColor(status.isRunning ? status.kind.color.opacity(0.95) : .white.opacity(0.38))
+                    .font(.system(size: 9.5, weight: .semibold, design: .rounded))
+                    .foregroundColor(status.isRunning ? status.kind.color.opacity(0.95) : .white.opacity(0.40))
                     .lineLimit(1)
+                    .minimumScaleFactor(0.8)
 
-                Spacer()
+                Spacer(minLength: 2)
 
                 if status.kind != .terminalApps {
                     Button {
                         engine.toggleWatchedAgent(status.kind)
                     } label: {
                         Image(systemName: isWatched ? "eye.fill" : "eye.slash")
-                            .font(.system(size: 9.5, weight: .bold))
+                            .font(.system(size: 10, weight: .bold))
                             .foregroundColor(isWatched ? accentCyan : .white.opacity(0.3))
+                            .frame(width: 18, height: 18)
                     }
                     .buttonStyle(.plain)
-                    .help(isWatched ? "Bu ajan kalkan gözcüsünde izleniyor" : "İzleme dışı")
+                    .help(isWatched ? "Kalkan gözcüsünde izleniyor" : "İzleme dışı")
                 }
 
                 Button {
                     engine.focusOrLaunchAgent(status.kind)
                 } label: {
                     Image(systemName: "arrow.up.forward.app.fill")
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundColor(.white.opacity(0.45))
+                        .font(.system(size: 10.5, weight: .bold))
+                        .foregroundColor(.white.opacity(0.5))
+                        .frame(width: 18, height: 18)
                 }
                 .buttonStyle(.plain)
                 .help("\(status.kind.displayName) uygulamasını/terminalini öne getir")
             }
         }
-        .padding(8.5)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7.5)
+        .frame(height: 58)
         .background(
             RoundedRectangle(cornerRadius: 11, style: .continuous)
-                .fill(status.isRunning ? status.kind.color.opacity(0.09) : Color.white.opacity(0.035))
+                .fill(status.isRunning ? status.kind.color.opacity(0.10) : Color.white.opacity(0.035))
                 .overlay(
                     RoundedRectangle(cornerRadius: 11, style: .continuous)
                         .stroke(
-                            status.isRunning ? status.kind.color.opacity(0.45) : Color.white.opacity(0.06),
+                            status.isRunning ? status.kind.color.opacity(0.48) : Color.white.opacity(0.06),
                             lineWidth: 1
                         )
                 )
         )
     }
 
-    // MARK: - SEKME 3: Ayarlar Paneli
+    // MARK: - SEKME 3: Ayarlar Paneli (Sıfır Kaymalı Simetrik Satırlar)
     private var settingsPanel: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("OTONOM KORUMA & TERCİHLER")
-                .font(.system(size: 10, weight: .heavy, design: .rounded))
-                .tracking(0.6)
+            Text("OTONOM KORUMA & SİSTEM TERCİHLERİ")
+                .font(.system(size: 10.5, weight: .heavy, design: .rounded))
+                .tracking(0.5)
                 .foregroundColor(accentCyan)
 
-            VStack(spacing: 9) {
+            VStack(spacing: 10) {
                 settingToggleRow(
-                    icon: "Cpu.fill",
                     sysIcon: "bolt.badge.automatic.fill",
                     title: "Ajan Çalışırken Kalkanı Otomatik Aç",
-                    subtitle: "Claude, Codex, AGY, Cursor veya OpenCode algılanınca kalkanı başlatır",
+                    subtitle: "İzlenen bir ajan algılandığında korumayı otomatik başlatır",
                     isOn: $engine.autoActivateOnAgent
                 )
 
                 Divider().background(Color.white.opacity(0.08))
 
                 settingToggleRow(
-                    icon: "",
                     sysIcon: "clock.badge.checkmark",
                     title: "Menü Çubuğunda Canlı Sayaç",
-                    subtitle: "Sağ üstteki simgenin yanında kalan süreyi gösterir",
+                    subtitle: "Sağ üstteki Kalkan simgesinin yanında kalan süreyi gösterir",
                     isOn: $engine.showMenuBarTimer
                 )
 
                 Divider().background(Color.white.opacity(0.08))
 
                 settingToggleRow(
-                    icon: "",
                     sysIcon: "dock.rectangle",
                     title: "Dock Simgesini Göster",
-                    subtitle: "Kapatırsanız sadece sağ üst menü çubuğunda çalışır",
+                    subtitle: "Kapatıldığında yalnızca sağ üst menü çubuğunda çalışır",
                     isOn: $engine.showInDock
                 )
 
                 Divider().background(Color.white.opacity(0.08))
 
                 settingToggleRow(
-                    icon: "",
                     sysIcon: "battery.25",
-                    title: "Düşük Pil Sigortası (%15)",
-                    subtitle: "Şarjda değilken pil %15'e düşerse uykuyu serbest bırakır",
+                    title: "Düşük Pil Güvenlik Sigortası (%15)",
+                    subtitle: "Şarjda değilken pil %15 altına düşerse uykuyu serbest bırakır",
                     isOn: $engine.batterySafetyEnabled
                 )
 
                 Divider().background(Color.white.opacity(0.08))
 
                 settingToggleRow(
-                    icon: "",
                     sysIcon: "speaker.wave.2.fill",
-                    title: "Akustik Ses Efektleri",
-                    subtitle: "Kalkan açılıp kapanırken sistem ses bildirimi çalar",
+                    title: "Akustik Etkileşim Sesleri",
+                    subtitle: "Kalkan başlatılıp durdurulurken macOS ses bildirimi çalar",
                     isOn: $engine.soundEffectsEnabled
                 )
 
                 Divider().background(Color.white.opacity(0.08))
 
-                HStack {
-                    Image(systemName: "power.circle.fill")
-                        .font(.system(size: 15))
-                        .foregroundColor(accentCyan)
-                        .frame(width: 22)
-
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text("Mac Açılışında Otomatik Başlat")
-                            .font(.system(size: 11.5, weight: .bold, design: .rounded))
-                            .foregroundColor(.white)
-                        Text("Bilgisayar açıldığında sağ üst köşede hazır bekler")
-                            .font(.system(size: 9.5, weight: .medium, design: .rounded))
-                            .foregroundColor(.white.opacity(0.55))
-                    }
-
-                    Spacer()
-
-                    Toggle("", isOn: Binding(
+                settingToggleRow(
+                    sysIcon: "power.circle.fill",
+                    title: "Mac Açılışında Otomatik Başlat",
+                    subtitle: "Bilgisayar açıldığında sağ üst menü çubuğunda hazır bekler",
+                    isOn: Binding(
                         get: { engine.launchAtLogin },
                         set: { _ in engine.toggleLaunchAtLogin() }
-                    ))
-                    .toggleStyle(.switch)
-                    .labelsHidden()
-                }
+                    )
+                )
             }
-            .padding(11)
+            .padding(13)
             .background(
-                RoundedRectangle(cornerRadius: 13, style: .continuous)
-                    .fill(Color.white.opacity(0.05))
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(Color.white.opacity(0.045))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .stroke(Color.white.opacity(0.07), lineWidth: 1)
+                    )
             )
 
-            Spacer()
+            // Alt Bilgi Kartı (Tam Genişlik Hizalı)
+            HStack(spacing: 10) {
+                Image(systemName: "hand.tap.fill")
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundColor(accentCyan)
+                    .frame(width: 26)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Hızlı İpucu: Sağ Tıkla Anında Aç / Kapat")
+                        .font(.system(size: 11, weight: .bold, design: .rounded))
+                        .foregroundColor(.white)
+                    Text("Sağ üst menü çubuğundaki Kalkan simgesine sağ tıklayarak (veya Option+Tık ile) pencereyi açmadan kalkanı değiştirebilirsiniz.")
+                        .font(.system(size: 10, weight: .medium, design: .rounded))
+                        .foregroundColor(.white.opacity(0.6))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Spacer(minLength: 0)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(12)
+            .background(
+                RoundedRectangle(cornerRadius: 13, style: .continuous)
+                    .fill(accentIndigo.opacity(0.14))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 13, style: .continuous)
+                            .stroke(accentIndigo.opacity(0.35), lineWidth: 1)
+                    )
+            )
+
+            Spacer(minLength: 0)
         }
     }
 
-    private func settingToggleRow(icon: String, sysIcon: String, title: String, subtitle: String, isOn: Binding<Bool>) -> some View {
-        HStack {
+    private func settingToggleRow(sysIcon: String, title: String, subtitle: String, isOn: Binding<Bool>) -> some View {
+        HStack(spacing: 10) {
             Image(systemName: sysIcon)
-                .font(.system(size: 15))
+                .font(.system(size: 15, weight: .semibold))
                 .foregroundColor(accentCyan)
-                .frame(width: 22)
+                .frame(width: 24, alignment: .center)
 
-            VStack(alignment: .leading, spacing: 1) {
+            VStack(alignment: .leading, spacing: 2) {
                 Text(title)
-                    .font(.system(size: 11.5, weight: .bold, design: .rounded))
+                    .font(.system(size: 12, weight: .bold, design: .rounded))
                     .foregroundColor(.white)
+                    .lineLimit(1)
                 Text(subtitle)
-                    .font(.system(size: 9.5, weight: .medium, design: .rounded))
+                    .font(.system(size: 10, weight: .medium, design: .rounded))
                     .foregroundColor(.white.opacity(0.55))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
             }
 
-            Spacer()
+            Spacer(minLength: 8)
 
             Toggle("", isOn: isOn)
                 .toggleStyle(.switch)
                 .labelsHidden()
         }
+        .frame(height: 36)
     }
 
     // MARK: - Alt Durum & Çıkış Çubuğu
@@ -1664,22 +1719,22 @@ struct ShieldControlPopoverView: View {
             HStack(spacing: 5) {
                 Circle()
                     .fill(engine.hardwareSleepDisabled ? accentCyan : Color.white.opacity(0.25))
-                    .frame(width: 6.5, height: 6.5)
-                Text(engine.hardwareSleepDisabled ? "Donanım Kilidi: AÇIK" : "Normal Uyku")
-                    .font(.system(size: 9.5, weight: .bold, design: .rounded))
-                    .foregroundColor(.white.opacity(0.75))
+                    .frame(width: 7, height: 7)
+                Text(engine.hardwareSleepDisabled ? "Donanım Kilidi: AÇIK" : "Normal Uyku Modu")
+                    .font(.system(size: 10, weight: .bold, design: .rounded))
+                    .foregroundColor(.white.opacity(0.8))
             }
 
             Text("•")
                 .foregroundColor(.white.opacity(0.25))
 
-            HStack(spacing: 3) {
+            HStack(spacing: 4) {
                 Image(systemName: engine.isCharging ? "bolt.batteryblock.fill" : "battery.75")
-                    .font(.system(size: 9.5, weight: .bold))
+                    .font(.system(size: 10, weight: .bold))
                     .foregroundColor(engine.isCharging ? accentCyan : .yellow)
                 Text("%\(engine.batteryLevel)")
-                    .font(.system(size: 9.5, weight: .bold, design: .monospaced))
-                    .foregroundColor(.white.opacity(0.75))
+                    .font(.system(size: 10, weight: .bold, design: .monospaced))
+                    .foregroundColor(.white.opacity(0.8))
             }
 
             Spacer()
@@ -1690,17 +1745,18 @@ struct ShieldControlPopoverView: View {
             } label: {
                 HStack(spacing: 4) {
                     Image(systemName: "power")
-                        .font(.system(size: 9, weight: .bold))
+                        .font(.system(size: 9.5, weight: .bold))
                     Text("Çıkış")
-                        .font(.system(size: 9.5, weight: .bold, design: .rounded))
+                        .font(.system(size: 10, weight: .bold, design: .rounded))
                 }
-                .foregroundColor(.white.opacity(0.55))
-                .padding(.horizontal, 8)
-                .padding(.vertical, 3.5)
-                .background(Capsule().fill(Color.white.opacity(0.06)))
+                .foregroundColor(.white.opacity(0.65))
+                .padding(.horizontal, 10)
+                .padding(.vertical, 4.5)
+                .background(Capsule().fill(Color.white.opacity(0.07)))
             }
             .buttonStyle(.plain)
         }
+        .frame(height: 24)
     }
 }
 
@@ -1712,30 +1768,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var hudWindow: NSPanel!
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Komut satırından --tab radar veya --tab settings ile başlatma desteği
+        let args = CommandLine.arguments
+        if let tabIdx = args.firstIndex(of: "--tab"), tabIdx + 1 < args.count {
+            let tabArg = args[tabIdx + 1].lowercased()
+            if tabArg == "radar" { ShieldEngine.shared.currentTab = .radar }
+            else if tabArg == "settings" { ShieldEngine.shared.currentTab = .settings }
+            else { ShieldEngine.shared.currentTab = .shield }
+        }
+
         let engine = ShieldEngine.shared
         NSApp.setActivationPolicy(engine.showInDock ? .regular : .accessory)
 
         let pop = NSPopover()
-        pop.contentSize = NSSize(width: 396, height: 600)
+        pop.contentSize = NSSize(width: 436, height: 620)
         pop.behavior = .transient
         pop.animates = true
         pop.contentViewController = NSHostingController(rootView: ShieldControlPopoverView(engine: engine))
         self.popover = pop
 
         let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 396, height: 600),
-            styleMask: [.titled, .closable, .fullSizeContentView, .nonactivatingPanel],
+            contentRect: NSRect(x: 0, y: 0, width: 436, height: 620),
+            styleMask: [.titled, .closable, .fullSizeContentView],
             backing: .buffered,
             defer: false
         )
         panel.titleVisibility = .hidden
         panel.titlebarAppearsTransparent = true
         panel.isMovableByWindowBackground = true
+        panel.hidesOnDeactivate = false
         panel.level = .floating
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.backgroundColor = .clear
         panel.isOpaque = false
         panel.hasShadow = true
+        panel.standardWindowButton(.closeButton)?.isHidden = true
         panel.standardWindowButton(.miniaturizeButton)?.isHidden = true
         panel.standardWindowButton(.zoomButton)?.isHidden = true
         panel.contentViewController = NSHostingController(rootView: ShieldControlPopoverView(engine: engine))
