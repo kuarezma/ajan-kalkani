@@ -8,7 +8,7 @@
 
 *Keep your autonomous AI coding agents (`Claude Code`, `Codex`, `AGY`, `Cursor`, `OpenCode`, `DeepSeek Harness`) and terminal sessions running at full speed even when your MacBook lid is closed.*
 
-[![Version](https://img.shields.io/badge/Version-v3.3.0-16E0C2?style=for-the-badge)](https://github.com/kuarezma/ajan-kalkani/releases/latest)
+[![Version](https://img.shields.io/badge/Version-v3.3.1-16E0C2?style=for-the-badge)](https://github.com/kuarezma/ajan-kalkani/releases/latest)
 [![Platform](https://img.shields.io/badge/platform-macOS%2014%2B%20(Apple%20Silicon%20%26%20Intel)-0A84FF?style=for-the-badge&logo=apple&logoColor=white)](#)
 [![Swift](https://img.shields.io/badge/Swift-6.0%20Native-F05138?style=for-the-badge&logo=swift&logoColor=white)](#)
 [![License: MIT](https://img.shields.io/badge/License-MIT-A259FF?style=for-the-badge)](LICENSE)

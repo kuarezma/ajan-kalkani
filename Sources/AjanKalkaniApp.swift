@@ -276,8 +276,8 @@ final class ShieldEngine: ObservableObject {
     @Published var launchAtLogin: Bool = false
 
     // OTA Güncelleme Durumu
-    let currentVersionString: String = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "3.3.0"
-    let currentBuildNumber: Int = Int(Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "330") ?? 330
+    let currentVersionString: String = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "3.3.1"
+    let currentBuildNumber: Int = Int(Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "331") ?? 331
     @Published var updateState: UpdateState = .idle
     @Published var latestManifest: RemoteVersionManifest? = nil
     @Published var lastUpdateCheckText: String = "Henüz kontrol edilmedi"
