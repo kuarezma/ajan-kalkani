@@ -1,8 +1,8 @@
 {
-  "version": "3.2.0",
-  "build": 320,
-  "released_at": "2026-10-21T00:32:00+03:00",
+  "version": "3.3.0",
+  "build": 330,
+  "released_at": "2026-10-22T18:30:00+03:00",
   "download_url": "https://github.com/kuarezma/ajan-kalkani/releases/latest/download/AjanKalkani.app.zip",
   "tarball_url": "https://github.com/kuarezma/ajan-kalkani/archive/refs/heads/main.tar.gz",
-  "notes": "v3.2.0: Uygulama içi otomatik OTA güncelleme motoru, 12'li Ajan & Terminal Radarı, aktif kalkan oturumu koruma ve sıfır kaymalı sabit ızgara arayüzü."
+  "notes": "v3.3.0: Çekirdek seviyesi tekil süreç kilidi (flock & LSMultipleInstancesProhibited), duvar saati (wall-clock) sapmasız sayaç, App Nap koruması, kalıcı ajan/mod tercihleri ve başlangıç donanım senkronizasyonu."
 }

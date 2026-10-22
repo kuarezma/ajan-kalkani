@@ -2,6 +2,7 @@ import SwiftUI
 import AppKit
 import IOKit.ps
 import ServiceManagement
+import Darwin
 
 // MARK: - Süre Seçenekleri
 enum ShieldDuration: Int, CaseIterable, Identifiable {
@@ -221,11 +222,26 @@ final class ShieldEngine: ObservableObject {
     static let shared = ShieldEngine()
 
     @Published var isActive: Bool = false
-    @Published var selectedDuration: ShieldDuration = .hour2
-    @Published var selectedMode: ShieldMode = .clamshellAgent
+    @Published var selectedDuration: ShieldDuration = .hour2 {
+        didSet { UserDefaults.standard.set(selectedDuration.rawValue, forKey: "selectedDurationRaw") }
+    }
+    @Published var selectedMode: ShieldMode = .clamshellAgent {
+        didSet { UserDefaults.standard.set(selectedMode.rawValue, forKey: "selectedModeRaw") }
+    }
     @Published var remainingSeconds: Int = 0
     @Published var totalSeconds: Int = 7200
     @Published var currentTab: DashboardTab = .shield
+
+    // Duvar Saati (Wall-Clock) Hedef Bitiş Zamanı ve App Nap Kilidi
+    private var targetEndDate: Date? = nil
+    private var appNapActivityToken: NSObjectProtocol? = nil
+    private lazy var ephemeralSession: URLSession = {
+        let cfg = URLSessionConfiguration.ephemeral
+        cfg.requestCachePolicy = .reloadIgnoringLocalAndRemoteCacheData
+        cfg.urlCache = nil
+        cfg.httpCookieStorage = nil
+        return URLSession(configuration: cfg)
+    }()
 
     // Ayarlar
     @Published var showMenuBarTimer: Bool = true {
@@ -260,8 +276,8 @@ final class ShieldEngine: ObservableObject {
     @Published var launchAtLogin: Bool = false
 
     // OTA Güncelleme Durumu
-    let currentVersionString: String = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "3.2.0"
-    let currentBuildNumber: Int = Int(Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "320") ?? 320
+    let currentVersionString: String = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "3.3.0"
+    let currentBuildNumber: Int = Int(Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "330") ?? 330
     @Published var updateState: UpdateState = .idle
     @Published var latestManifest: RemoteVersionManifest? = nil
     @Published var lastUpdateCheckText: String = "Henüz kontrol edilmedi"
@@ -269,7 +285,12 @@ final class ShieldEngine: ObservableObject {
     private var updateCheckTimer: Timer?
 
     // İzlenen Ajan Filtresi
-    @Published var watchedAgentKinds: Set<CodingAgentKind> = Set(CodingAgentKind.allCases.filter { $0 != .terminalApps })
+    @Published var watchedAgentKinds: Set<CodingAgentKind> = Set(CodingAgentKind.allCases.filter { $0 != .terminalApps }) {
+        didSet {
+            let rawList = watchedAgentKinds.map { $0.rawValue }
+            UserDefaults.standard.set(rawList, forKey: "watchedAgentKindsRaw")
+        }
+    }
 
     // Canlı Sistem & Ajan Telemetrisi
     @Published var hardwareSleepDisabled: Bool = false
@@ -316,12 +337,57 @@ final class ShieldEngine: ObservableObject {
         if UserDefaults.standard.object(forKey: "autoInstallUpdates") != nil {
             self.autoInstallUpdates = UserDefaults.standard.bool(forKey: "autoInstallUpdates")
         }
+        if UserDefaults.standard.object(forKey: "selectedDurationRaw") != nil {
+            let rawDur = UserDefaults.standard.integer(forKey: "selectedDurationRaw")
+            if let dur = ShieldDuration(rawValue: rawDur) {
+                self.selectedDuration = dur
+                self.totalSeconds = dur.rawValue
+            }
+        }
+        if let rawMode = UserDefaults.standard.string(forKey: "selectedModeRaw"),
+           let mode = ShieldMode(rawValue: rawMode) {
+            self.selectedMode = mode
+        }
+        if let savedWatched = UserDefaults.standard.stringArray(forKey: "watchedAgentKindsRaw") {
+            let parsed = Set(savedWatched.compactMap { CodingAgentKind(rawValue: $0) })
+            if !parsed.isEmpty {
+                self.watchedAgentKinds = parsed
+            }
+        }
 
+        purgeGhostLaunchServicesCaches()
         checkLaunchAtLoginStatus()
         restoreSessionIfUpdated()
+        if !isActive {
+            // Uygulama yeni açıldığında aktif bir oturum devralınmadıysa, önceki çökme/kapanmadan kalmış olabilecek yetim pmset kilidini sıfırla
+            DispatchQueue.global(qos: .utility).async { [weak self] in
+                if Self.checkPmsetSleepDisabledSync() {
+                    Task { @MainActor [weak self] in
+                        _ = self?.setPmsetSleepDisabled(false)
+                        self?.hardwareSleepDisabled = false
+                    }
+                }
+            }
+        }
         refreshSystemTelemetry()
         startTelemetryLoop()
         startUpdateCheckLoop()
+    }
+
+    // LaunchServices'in dev.ajankalkani.app isimli HTTPStorages/Caches klasörlerini sahte .app paketi sanmasını önler
+    private func purgeGhostLaunchServicesCaches() {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let ghostPaths = [
+            home.appendingPathComponent("Library/HTTPStorages/dev.ajankalkani.app"),
+            home.appendingPathComponent("Library/Caches/dev.ajankalkani.app"),
+            home.appendingPathComponent("Library/HTTPStorages/com.ugurhoca.ajankalkani"),
+            home.appendingPathComponent("Library/Caches/com.ugurhoca.ajankalkani")
+        ]
+        for url in ghostPaths {
+            if FileManager.default.fileExists(atPath: url.path) {
+                try? FileManager.default.removeItem(at: url)
+            }
+        }
     }
 
     // MARK: - Güncelleme Sonrası Aktif Kalkan Oturumunu Kaldığı Saniyeden Devam Ettir
@@ -342,6 +408,8 @@ final class ShieldEngine: ObservableObject {
             }
             self.totalSeconds = savedTot
             self.remainingSeconds = savedRem
+            self.targetEndDate = (self.selectedDuration == .infinite) ? nil : Date().addingTimeInterval(TimeInterval(savedRem))
+            beginAppNapProtection()
             _ = setPmsetSleepDisabled(true)
             startCaffeinateProcess()
             self.isActive = true
@@ -349,6 +417,21 @@ final class ShieldEngine: ObservableObject {
             self.statusMessage = "v\(updatedToVer) sürümüne güncellendi • Kalkan kesintisiz devam ediyor"
             startCountdownLoop()
             onStatusBarUpdate?()
+        }
+    }
+
+    private func beginAppNapProtection() {
+        endAppNapProtection()
+        appNapActivityToken = ProcessInfo.processInfo.beginActivity(
+            options: [.userInitiatedAllowingIdleSystemSleep, .suddenTerminationDisabled],
+            reason: "Ajan Kalkanı Aktif Sayaç ve Kapak Koruması"
+        )
+    }
+
+    private func endAppNapProtection() {
+        if let token = appNapActivityToken {
+            ProcessInfo.processInfo.endActivity(token)
+            appNapActivityToken = nil
         }
     }
 
@@ -383,7 +466,7 @@ final class ShieldEngine: ObservableObject {
         req.cachePolicy = .reloadIgnoringLocalAndRemoteCacheData
         req.timeoutInterval = 12
 
-        URLSession.shared.dataTask(with: req) { [weak self] data, response, error in
+        ephemeralSession.dataTask(with: req) { [weak self] data, response, error in
             Task { @MainActor [weak self] in
                 guard let self = self else { return }
 
@@ -527,8 +610,10 @@ final class ShieldEngine: ObservableObject {
         selectedDuration = duration
         totalSeconds = duration.rawValue
         remainingSeconds = duration.rawValue
+        targetEndDate = (duration == .infinite) ? nil : Date().addingTimeInterval(TimeInterval(duration.rawValue))
         idleAgentEmptyCount = 0
 
+        beginAppNapProtection()
         let pmsetOk = setPmsetSleepDisabled(true)
         startCaffeinateProcess()
 
@@ -547,11 +632,13 @@ final class ShieldEngine: ObservableObject {
     func deactivateShield(reason: String = "Kalkan devre dışı bırakıldı.") {
         stopCountdownLoop()
         stopCaffeinateProcess()
+        endAppNapProtection()
         _ = setPmsetSleepDisabled(false)
 
         isActive = false
         hardwareSleepDisabled = false
         remainingSeconds = 0
+        targetEndDate = nil
         statusMessage = reason
 
         playSound(named: "Glass")
@@ -564,6 +651,7 @@ final class ShieldEngine: ObservableObject {
         if isActive {
             totalSeconds = duration.rawValue
             remainingSeconds = duration.rawValue
+            targetEndDate = (duration == .infinite) ? nil : Date().addingTimeInterval(TimeInterval(duration.rawValue))
             statusMessage = duration == .infinite
                 ? "Süre SÜRESİZ olarak güncellendi • Kapağı kapatabilirsiniz"
                 : "Süre \(duration.title) olarak güncellendi • Kapağı kapatabilirsiniz"
@@ -580,11 +668,13 @@ final class ShieldEngine: ObservableObject {
             selectedDuration = .hour1
             totalSeconds = 3600
             remainingSeconds = 3600
+            targetEndDate = Date().addingTimeInterval(3600)
         } else {
             let delta = minutes * 60
             let newRemaining = max(60, remainingSeconds + delta)
             remainingSeconds = newRemaining
             totalSeconds = max(totalSeconds, newRemaining)
+            targetEndDate = Date().addingTimeInterval(TimeInterval(newRemaining))
         }
         playSound(named: "Pop")
         onStatusBarUpdate?()
@@ -609,8 +699,29 @@ final class ShieldEngine: ObservableObject {
     }
 
     func focusOrLaunchAgent(_ kind: CodingAgentKind) {
-        if let path = kind.appPathToOpen, FileManager.default.fileExists(atPath: path) {
-            NSWorkspace.shared.open(URL(fileURLWithPath: path))
+        switch kind {
+        case .claudeTerminal, .codexTerminal, .agyTerminal, .cursorAgentTerminal, .opencodeTerminal, .terminalApps:
+            let terminalPaths = [
+                "/Applications/Ghostty.app",
+                "/Applications/iTerm.app",
+                "/Applications/Warp.app",
+                "/System/Applications/Utilities/Terminal.app"
+            ]
+            let runningApps = NSWorkspace.shared.runningApplications
+            for tPath in terminalPaths {
+                if runningApps.contains(where: { $0.bundleURL?.path == tPath }) {
+                    NSWorkspace.shared.open(URL(fileURLWithPath: tPath))
+                    return
+                }
+            }
+            for tPath in terminalPaths where FileManager.default.fileExists(atPath: tPath) {
+                NSWorkspace.shared.open(URL(fileURLWithPath: tPath))
+                return
+            }
+        default:
+            if let path = kind.appPathToOpen, FileManager.default.fileExists(atPath: path) {
+                NSWorkspace.shared.open(URL(fileURLWithPath: path))
+            }
         }
     }
 
@@ -670,8 +781,15 @@ final class ShieldEngine: ObservableObject {
         guard isActive else { return }
 
         if selectedDuration != .infinite {
-            if remainingSeconds > 1 {
-                remainingSeconds -= 1
+            let nextRemaining: Int
+            if let target = targetEndDate {
+                nextRemaining = max(0, Int(ceil(target.timeIntervalSinceNow)))
+            } else {
+                nextRemaining = max(0, remainingSeconds - 1)
+            }
+
+            if nextRemaining > 0 {
+                remainingSeconds = nextRemaining
                 onStatusBarUpdate?()
             } else {
                 deactivateShield(reason: "Süre tamamlandı, Mac normal uyku moduna döndü.")
@@ -1080,14 +1198,19 @@ final class ShieldEngine: ObservableObject {
     }
 
     private func sendUserNotification(title: String, body: String) {
+        let safeTitle = title.replacingOccurrences(of: "\"", with: "'")
+        let safeBody = body.replacingOccurrences(of: "\"", with: "'")
+        let soundClause = soundEffectsEnabled ? " sound name \"Glass\"" : ""
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-        proc.arguments = ["-e", "display notification \"\(body)\" with title \"\(title)\" sound name \"Glass\""]
+        proc.arguments = ["-e", "display notification \"\(safeBody)\" with title \"\(safeTitle)\"\(soundClause)"]
         try? proc.run()
     }
 
     func cleanupBeforeExit() {
         stopCaffeinateProcess()
+        endAppNapProtection()
+        AjanKalkaniMain.releaseSingleInstanceLock()
         // Eğer uygulama kendi kendini güncelliyorsa kapak uykusu kilidini koru; yeni sürüm 0.4sn içinde devralacak
         if !isUpdatingAndRestarting && (isActive || hardwareSleepDisabled) {
             _ = setPmsetSleepDisabled(false)
@@ -2137,7 +2260,6 @@ struct ShieldControlPopoverView: View {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
-    private var popover: NSPopover!
     private var hudWindow: NSPanel!
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -2152,13 +2274,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let engine = ShieldEngine.shared
         NSApp.setActivationPolicy(engine.showInDock ? .regular : .accessory)
-
-        let pop = NSPopover()
-        pop.contentSize = NSSize(width: 436, height: 620)
-        pop.behavior = .transient
-        pop.animates = true
-        pop.contentViewController = NSHostingController(rootView: ShieldControlPopoverView(engine: engine))
-        self.popover = pop
 
         let panel = NSPanel(
             contentRect: NSRect(x: 0, y: 0, width: 436, height: 620),
@@ -2234,10 +2349,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func toggleControlInterface() {
-        if popover.isShown {
-            popover.performClose(nil)
-            return
-        }
         if hudWindow.isVisible {
             hudWindow.orderOut(nil)
             return
@@ -2302,18 +2413,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 @MainActor
 struct AjanKalkaniMain {
     static var retainedDelegate: AppDelegate?
+    nonisolated(unsafe) static var lockFileDescriptor: Int32 = -1
+
+    nonisolated static func acquireSingleInstanceLock() -> Bool {
+        let fd = open("/tmp/ajankalkani.lock", O_CREAT | O_RDWR, 0o600)
+        guard fd >= 0 else { return true }
+        if flock(fd, LOCK_EX | LOCK_NB) != 0 {
+            close(fd)
+            return false
+        }
+        lockFileDescriptor = fd
+        return true
+    }
+
+    nonisolated static func releaseSingleInstanceLock() {
+        if lockFileDescriptor >= 0 {
+            flock(lockFileDescriptor, LOCK_UN)
+            close(lockFileDescriptor)
+            lockFileDescriptor = -1
+        }
+    }
 
     static func main() {
-        // Tekil Örnek Koruması (Single-Instance Guard): Aynı anda birden fazla Ajan Kalkanı açılmasını engelle
+        // 1. Çekirdek Seviyesi Tekil Örnek Kilidi (Kernel flock + NSRunningApplication Guard)
         let currentPID = ProcessInfo.processInfo.processIdentifier
         let runningInstances = NSRunningApplication.runningApplications(withBundleIdentifier: "dev.ajankalkani.app")
             .filter { $0.processIdentifier != currentPID }
-        if let existing = runningInstances.first {
-            existing.activate(options: [.activateAllWindows])
+        if !acquireSingleInstanceLock() || !runningInstances.isEmpty {
+            runningInstances.first?.activate(options: [.activateAllWindows])
             exit(0)
         }
 
         signal(SIGTERM) { _ in
+            AjanKalkaniMain.releaseSingleInstanceLock()
             let proc = Process()
             proc.executableURL = URL(fileURLWithPath: "/usr/bin/sudo")
             proc.arguments = ["-n", "/usr/bin/pmset", "disablesleep", "0"]
@@ -2322,6 +2454,7 @@ struct AjanKalkaniMain {
             exit(0)
         }
         signal(SIGINT) { _ in
+            AjanKalkaniMain.releaseSingleInstanceLock()
             let proc = Process()
             proc.executableURL = URL(fileURLWithPath: "/usr/bin/sudo")
             proc.arguments = ["-n", "/usr/bin/pmset", "disablesleep", "0"]
