@@ -1017,8 +1017,49 @@ final class ShieldEngine: ObservableObject {
             .appendingPathComponent("Library/LaunchAgents/dev.ajankalkani.app.plist")
     }
 
+    private var legacyLaunchAgentURL: URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/LaunchAgents/com.ugurhoca.ajankalkani.plist")
+    }
+
     func checkLaunchAtLoginStatus() {
+        // Eski sürüm (v1/v2) LaunchAgent kalıntısı varsa otomatik temizle
+        if FileManager.default.fileExists(atPath: legacyLaunchAgentURL.path) {
+            try? FileManager.default.removeItem(at: legacyLaunchAgentURL)
+        }
         launchAtLogin = FileManager.default.fileExists(atPath: launchAgentURL.path)
+        if launchAtLogin {
+            writeLaunchAgentPlist()
+        }
+    }
+
+    private func writeLaunchAgentPlist() {
+        let appBundlePath = "/Applications/Ajan Kalkanı.app"
+        let plistContent = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+        <plist version="1.0">
+        <dict>
+            <key>Label</key>
+            <string>dev.ajankalkani.app</string>
+            <key>ProgramArguments</key>
+            <array>
+                <string>/usr/bin/open</string>
+                <string>-a</string>
+                <string>\(appBundlePath)</string>
+            </array>
+            <key>RunAtLoad</key>
+            <true/>
+            <key>KeepAlive</key>
+            <false/>
+        </dict>
+        </plist>
+        """
+        try? FileManager.default.createDirectory(
+            at: launchAgentURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try? plistContent.write(to: launchAgentURL, atomically: true, encoding: .utf8)
     }
 
     func toggleLaunchAtLogin() {
@@ -1026,30 +1067,7 @@ final class ShieldEngine: ObservableObject {
             try? FileManager.default.removeItem(at: launchAgentURL)
             launchAtLogin = false
         } else {
-            let appPath = "/Applications/Ajan Kalkanı.app/Contents/MacOS/AjanKalkani"
-            let plistContent = """
-            <?xml version="1.0" encoding="UTF-8"?>
-            <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-            <plist version="1.0">
-            <dict>
-                <key>Label</key>
-                <string>dev.ajankalkani.app</string>
-                <key>ProgramArguments</key>
-                <array>
-                    <string>\(appPath)</string>
-                </array>
-                <key>RunAtLoad</key>
-                <true/>
-                <key>KeepAlive</key>
-                <false/>
-            </dict>
-            </plist>
-            """
-            try? FileManager.default.createDirectory(
-                at: launchAgentURL.deletingLastPathComponent(),
-                withIntermediateDirectories: true
-            )
-            try? plistContent.write(to: launchAgentURL, atomically: true, encoding: .utf8)
+            writeLaunchAgentPlist()
             launchAtLogin = true
         }
         playSound(named: "Tink")
@@ -2286,6 +2304,15 @@ struct AjanKalkaniMain {
     static var retainedDelegate: AppDelegate?
 
     static func main() {
+        // Tekil Örnek Koruması (Single-Instance Guard): Aynı anda birden fazla Ajan Kalkanı açılmasını engelle
+        let currentPID = ProcessInfo.processInfo.processIdentifier
+        let runningInstances = NSRunningApplication.runningApplications(withBundleIdentifier: "dev.ajankalkani.app")
+            .filter { $0.processIdentifier != currentPID }
+        if let existing = runningInstances.first {
+            existing.activate(options: [.activateAllWindows])
+            exit(0)
+        }
+
         signal(SIGTERM) { _ in
             let proc = Process()
             proc.executableURL = URL(fileURLWithPath: "/usr/bin/sudo")
