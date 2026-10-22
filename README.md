@@ -8,9 +8,9 @@
 
 *Keep your autonomous AI coding agents (`Claude Code`, `Codex`, `AGY`, `Cursor`, `OpenCode`, `DeepSeek Harness`) and terminal sessions running at full speed even when your MacBook lid is closed.*
 
+[![Version](https://img.shields.io/badge/Version-v3.3.0-16E0C2?style=for-the-badge)](https://github.com/kuarezma/ajan-kalkani/releases/latest)
 [![Platform](https://img.shields.io/badge/platform-macOS%2014%2B%20(Apple%20Silicon%20%26%20Intel)-0A84FF?style=for-the-badge&logo=apple&logoColor=white)](#)
 [![Swift](https://img.shields.io/badge/Swift-6.0%20Native-F05138?style=for-the-badge&logo=swift&logoColor=white)](#)
-[![Binary Size](https://img.shields.io/badge/Binary-~770%20KB-28CD41?style=for-the-badge)](#)
 [![License: MIT](https://img.shields.io/badge/License-MIT-A259FF?style=for-the-badge)](LICENSE)
 
 </div>
@@ -27,8 +27,10 @@ Standart `caffeinate` komutları veya klasik ekran açık tutucu uygulamalar, Ma
 - 📡 **12'li Canlı Ajan & Terminal Radarı:** Masaüstü IDE uygulamalarını ve CLI/TTY terminal oturumlarını birbirinden ayırarak kaç paralel ajan çalıştığını (`×6`) ve hangi terminal sekmelerinde (`ttys000, ttys001...`) aktif olduğunu canlı gösterir.
 - 🧠 **Akıllı Ajan Gözcüsü (Smart Watch):** Ajanlarınız uzun süreli refactor, test veya kod üretim görevini bitirdiğinde MacBook'u otomatik olarak normal uyku moduna döndürür.
 - 🤖 **Otomatik Kalkan (Auto-Shield):** Herhangi bir kodlama ajanı başladığında hiçbir tuşa basmanıza gerek kalmadan kalkanı kendiliğinden devreye alır.
+- 🔄 **Kesintisiz OTA Otomatik Güncelleme:** GitHub üzerinden yeni sürümleri otomatik denetler, indirir ve aktif kalkan sürenizi tek saniye bile kesintiye uğratmadan günceller.
+- 🔒 **Çekirdek Seviyesi Tekil Süreç Kilidi (`flock` & Duvar Saati Motoru):** Darwin çekirdek kilidi (`LOCK_EX | LOCK_NB`) ve `LSMultipleInstancesProhibited` ile mükerrer kopya açılmasını sıfır gecikmeyle engeller; `targetEndDate` duvar saati ve App Nap korumasıyla kapak kapalıyken bile saniye şaşmaz.
 - 🔋 **Düşük Pil Güvenlik Sigortası:** MacBook şarjda değilken pil `%15` seviyesinin altına düşerse veri kaybını ve aşırı deşarjı önlemek için uyku kilidini otomatik kaldırır.
-- 🪶 **Tüy Kadar Hafif:** Electron veya web sarmalayıcı içermez. %100 **Native Swift 6 & SwiftUI** ile yazılmıştır (`~770 KB` derlenmiş boyut, `%0.0` boşta CPU kullanımı).
+- 🪶 **Tüy Kadar Hafif:** Electron veya web sarmalayıcı içermez. %100 **Native Swift 6 & SwiftUI** ile yazılmıştır (`%0.0` boşta CPU kullanımı).
 
 ---
 
@@ -110,9 +112,9 @@ flowchart LR
 
 ---
 
-## 🛡️ Güvenlik Mimarisi
-- **Çıkış ve Çökme Sigortası:** Uygulama normal kapatıldığında (`applicationWillTerminate`) veya `SIGINT` / `SIGTERM` sinyali aldığında `pmset disablesleep 0` otomatik çalıştırılarak Mac'in standart uyku davranışı geri yüklenir.
-- **Sıfır Telemetri & Sıfır Ağ İsteği:** Uygulama hiçbir dış sunucuya bağlanmaz; tüm süreç analizi yerel olarak çalışır.
+## 🛡️ Güvenlik ve Kararlılık Mimarisi
+- **Çıkış, Başlangıç ve Çökme Sigortası:** Uygulama normal kapatıldığında (`applicationWillTerminate`), `SIGINT` / `SIGTERM` sinyali aldığında veya önceki bir çökmeden sonra yeniden açıldığında yetim `pmset disablesleep` kilitlerini otomatik sıfırlayarak Mac'in standart uyku davranışıyla tam senkronizasyon sağlar.
+- **Sıfır Disk Önbellek Kirliliği:** OTA sürüm kontrolleri `URLSessionConfiguration.ephemeral` ile bellekte yapılır; `~/Library/HTTPStorages` veya `Caches` altında LaunchServices çakışmasına yol açabilecek kalıntı klasörler oluşturmaz.
 
 ---
 
