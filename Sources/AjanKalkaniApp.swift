@@ -1290,7 +1290,7 @@ struct ShieldControlPopoverView: View {
 
     // MARK: - Üst Başlık Barı (Sıfır Kaymalı Simetrik Düzen)
     private var headerBar: some View {
-        HStack(spacing: 11) {
+        HStack(spacing: 10) {
             ZStack {
                 RoundedRectangle(cornerRadius: 11, style: .continuous)
                     .fill(
@@ -1309,65 +1309,75 @@ struct ShieldControlPopoverView: View {
                     .font(.system(size: 18, weight: .bold))
                     .foregroundColor(engine.isActive ? .black : .white.opacity(0.9))
             }
+            .fixedSize()
 
             VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 7) {
+                HStack(spacing: 6) {
                     Text("AJAN KALKANI")
                         .font(.system(size: 14, weight: .heavy, design: .rounded))
-                        .tracking(0.6)
+                        .tracking(0.5)
                         .foregroundColor(.white)
+                        .lineLimit(1)
                         .fixedSize()
 
                     Text(engine.isActive ? "KORUMA AKTİF" : "BEKLEMEDE")
-                        .font(.system(size: 9, weight: .black, design: .rounded))
+                        .font(.system(size: 8.5, weight: .black, design: .rounded))
                         .padding(.horizontal, 7)
                         .padding(.vertical, 2.5)
+                        .frame(minWidth: 74)
                         .background(
                             Capsule()
                                 .fill(engine.isActive ? accentCyan.opacity(0.22) : Color.white.opacity(0.09))
                         )
                         .foregroundColor(engine.isActive ? accentCyan : .white.opacity(0.6))
+                        .lineLimit(1)
                         .fixedSize()
                 }
 
                 Text("Otonom Kodlama & Terminal Uyku Koruyucu")
-                    .font(.system(size: 11, weight: .medium, design: .rounded))
+                    .font(.system(size: 10.5, weight: .medium, design: .rounded))
                     .foregroundColor(.white.opacity(0.58))
                     .lineLimit(1)
-                    .fixedSize(horizontal: true, vertical: false)
+                    .minimumScaleFactor(0.80)
             }
-
-            Spacer(minLength: 6)
+            .frame(maxWidth: .infinity, alignment: .leading)
 
             // Yeni güncelleme varsa başlıkta parlayan tek tık "Güncelle" rozeti göster
             if case .updateAvailable(let newVer, _, _) = engine.updateState {
                 Button {
                     engine.performInAppUpdate()
                 } label: {
-                    HStack(spacing: 4) {
+                    HStack(spacing: 3.5) {
                         Image(systemName: "arrow.down.circle.fill")
-                            .font(.system(size: 11, weight: .bold))
+                            .font(.system(size: 10.5, weight: .bold))
                         Text("v\(newVer)")
-                            .font(.system(size: 10, weight: .black, design: .rounded))
+                            .font(.system(size: 9.5, weight: .black, design: .rounded))
+                            .lineLimit(1)
                     }
                     .foregroundColor(.black)
-                    .padding(.horizontal, 8)
+                    .padding(.horizontal, 7.5)
                     .padding(.vertical, 5.5)
                     .background(Capsule().fill(accentCyan))
                 }
                 .buttonStyle(.plain)
+                .fixedSize()
                 .help("Yeni sürümü hemen indir ve otomatik kur")
             }
 
             // Sağ Üst Menü Çubuğuna Küçült / Gizle butonu
             Button {
-                NSApp.keyWindow?.orderOut(nil)
+                NSApp.windows.forEach { win in
+                    if win is NSPanel {
+                        win.orderOut(nil)
+                    }
+                }
             } label: {
                 HStack(spacing: 4) {
                     Image(systemName: "menubar.arrow.up.rectangle")
-                        .font(.system(size: 12, weight: .bold))
+                        .font(.system(size: 11.5, weight: .bold))
                     Text("Gizle")
                         .font(.system(size: 10.5, weight: .bold, design: .rounded))
+                        .lineLimit(1)
                 }
                 .foregroundColor(accentCyan)
                 .padding(.horizontal, 9)
@@ -1379,6 +1389,7 @@ struct ShieldControlPopoverView: View {
                 )
             }
             .buttonStyle(.plain)
+            .fixedSize()
             .help("Pencereyi gizle (Sağ üst menü çubuğundan her an açabilirsiniz)")
         }
         .frame(height: 40)
@@ -1396,9 +1407,10 @@ struct ShieldControlPopoverView: View {
                 } label: {
                     HStack(spacing: 5) {
                         Image(systemName: tab.icon)
-                            .font(.system(size: 11.5, weight: .bold))
+                            .font(.system(size: 11, weight: .bold))
+                            .frame(width: 14)
                         Text(tab.rawValue)
-                            .font(.system(size: 11.5, weight: isSelected ? .heavy : .semibold, design: .rounded))
+                            .font(.system(size: 11.5, weight: .bold, design: .rounded))
                             .lineLimit(1)
                             .fixedSize()
 
@@ -1413,6 +1425,7 @@ struct ShieldControlPopoverView: View {
                                         .fill(engine.activeCodingAgentsCount > 0 ? accentCyan : Color.white.opacity(0.15))
                                 )
                                 .foregroundColor(engine.activeCodingAgentsCount > 0 ? .black : .white.opacity(0.75))
+                                .fixedSize()
                         }
                     }
                     .frame(maxWidth: .infinity)
@@ -1547,7 +1560,8 @@ struct ShieldControlPopoverView: View {
 
                             VStack(spacing: 3) {
                                 Image(systemName: engine.isActive ? "lock.laptopcomputer" : "power")
-                                    .font(.system(size: 22, weight: .bold))
+                                    .font(.system(size: 21, weight: .bold))
+                                    .frame(width: 28, height: 24)
                                     .foregroundStyle(
                                         engine.isActive
                                             ? LinearGradient(colors: [accentCyan, .white], startPoint: .top, endPoint: .bottom)
@@ -1558,13 +1572,15 @@ struct ShieldControlPopoverView: View {
                                     .font(.system(size: 14.5, weight: .black, design: .monospaced))
                                     .foregroundColor(engine.isActive ? .white : .white.opacity(0.6))
                                     .lineLimit(1)
-                                    .minimumScaleFactor(0.8)
-                                    .frame(width: 86)
+                                    .minimumScaleFactor(0.78)
+                                    .frame(width: 92, height: 18)
 
                                 Text(engine.isActive ? "DURDUR" : "BAŞLAT")
                                     .font(.system(size: 8.5, weight: .heavy, design: .rounded))
                                     .tracking(0.8)
                                     .foregroundColor(engine.isActive ? accentCyan : .white.opacity(0.45))
+                                    .lineLimit(1)
+                                    .frame(width: 68, height: 12)
                             }
                         }
                         .scaleEffect(hoverPowerOrb ? 1.03 : 1.0)
@@ -1619,14 +1635,18 @@ struct ShieldControlPopoverView: View {
                     .font(.system(size: 10, weight: .heavy, design: .rounded))
                     .tracking(0.5)
                     .foregroundColor(.white.opacity(0.6))
+                    .lineLimit(1)
+                    .fixedSize()
 
-                Spacer()
+                Spacer(minLength: 6)
 
                 Text(engine.selectedDuration.subtitle)
                     .font(.system(size: 10, weight: .semibold, design: .rounded))
                     .foregroundColor(accentCyan.opacity(0.9))
                     .lineLimit(1)
+                    .fixedSize()
             }
+            .frame(height: 15)
 
             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 7), count: 4), spacing: 7) {
                 ForEach(ShieldDuration.allCases) { duration in
@@ -1637,8 +1657,9 @@ struct ShieldControlPopoverView: View {
                         }
                     } label: {
                         Text(duration.title)
-                            .font(.system(size: 11.5, weight: isSelected ? .heavy : .semibold, design: .rounded))
+                            .font(.system(size: 11.5, weight: .bold, design: .rounded))
                             .lineLimit(1)
+                            .fixedSize()
                             .frame(maxWidth: .infinity)
                             .frame(height: 29)
                             .background(
@@ -1669,6 +1690,7 @@ struct ShieldControlPopoverView: View {
                         Text("Şimdi")
                             .font(.system(size: 11.5, weight: .bold, design: .rounded))
                             .lineLimit(1)
+                            .fixedSize()
                     }
                     .frame(maxWidth: .infinity)
                     .frame(height: 29)
@@ -1735,8 +1757,9 @@ struct ShieldControlPopoverView: View {
                 .font(.system(size: 10, weight: .medium, design: .rounded))
                 .foregroundColor(.white.opacity(0.6))
                 .lineLimit(2)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .frame(height: 26, alignment: .topLeading)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+                .frame(height: 28, alignment: .topLeading)
         }
         .padding(11)
         .background(
@@ -1757,33 +1780,35 @@ struct ShieldControlPopoverView: View {
             }
         } label: {
             VStack(alignment: .leading, spacing: 7) {
-                HStack {
-                    HStack(spacing: 6) {
-                        Circle()
-                            .fill(engine.activeCodingAgentsCount > 0 ? accentCyan : Color.white.opacity(0.25))
-                            .frame(width: 7, height: 7)
-                            .shadow(color: engine.activeCodingAgentsCount > 0 ? accentCyan : .clear, radius: 4)
+                HStack(spacing: 6) {
+                    Circle()
+                        .fill(engine.activeCodingAgentsCount > 0 ? accentCyan : Color.white.opacity(0.25))
+                        .frame(width: 7, height: 7)
+                        .shadow(color: engine.activeCodingAgentsCount > 0 ? accentCyan : .clear, radius: 4)
+                        .fixedSize()
 
-                        Text(
-                            engine.activeCodingAgentsCount > 0
-                                ? "CANLI RADAR: \(engine.activeCodingAgentsCount) Ajan Oturumu Çalışıyor"
-                                : "CANLI RADAR: Aktif Kodlama Ajanı Yok"
-                        )
-                        .font(.system(size: 10.5, weight: .heavy, design: .rounded))
-                        .foregroundColor(.white)
-                        .lineLimit(1)
-                    }
-
-                    Spacer()
+                    Text(
+                        engine.activeCodingAgentsCount > 0
+                            ? "CANLI RADAR: \(engine.activeCodingAgentsCount) Ajan Oturumu Çalışıyor"
+                            : "CANLI RADAR: Aktif Kodlama Ajanı Yok"
+                    )
+                    .font(.system(size: 10.5, weight: .heavy, design: .rounded))
+                    .foregroundColor(.white)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
+                    .frame(maxWidth: .infinity, alignment: .leading)
 
                     HStack(spacing: 3) {
                         Text("Tümünü Gör")
                             .font(.system(size: 10, weight: .bold, design: .rounded))
+                            .lineLimit(1)
                         Image(systemName: "chevron.right")
                             .font(.system(size: 9, weight: .bold))
                     }
                     .foregroundColor(accentCyan)
+                    .fixedSize()
                 }
+                .frame(height: 15)
 
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 6) {
@@ -1792,6 +1817,8 @@ struct ShieldControlPopoverView: View {
                             Text("Herhangi bir ajan veya terminal başladığında burada canlı listelenir.")
                                 .font(.system(size: 10, weight: .medium, design: .rounded))
                                 .foregroundColor(.white.opacity(0.45))
+                                .lineLimit(1)
+                                .fixedSize()
                         } else {
                             ForEach(runningList) { status in
                                 HStack(spacing: 4) {
@@ -1801,9 +1828,11 @@ struct ShieldControlPopoverView: View {
                                     Text(status.kind.displayName)
                                         .font(.system(size: 10, weight: .bold, design: .rounded))
                                         .foregroundColor(.white.opacity(0.92))
+                                        .lineLimit(1)
                                     Text("×\(status.instanceCount)")
                                         .font(.system(size: 9.5, weight: .black, design: .monospaced))
                                         .foregroundColor(status.kind.color)
+                                        .lineLimit(1)
                                 }
                                 .padding(.horizontal, 8)
                                 .padding(.vertical, 4)
@@ -1812,6 +1841,7 @@ struct ShieldControlPopoverView: View {
                                         .fill(status.kind.color.opacity(0.14))
                                         .overlay(Capsule().stroke(status.kind.color.opacity(0.35), lineWidth: 0.8))
                                 )
+                                .fixedSize()
                             }
                         }
                     }
@@ -1834,18 +1864,21 @@ struct ShieldControlPopoverView: View {
     // MARK: - SEKME 2: 12'li Ajan & Terminal Radar Matrisi (Sıfır Kesilmeli Kartlar)
     private var agentRadarMatrixView: some View {
         VStack(alignment: .leading, spacing: 9) {
-            HStack {
+            HStack(spacing: 8) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("KODLAMA AJANLARI & TERMİNAL HAVUZU")
                         .font(.system(size: 10.5, weight: .heavy, design: .rounded))
                         .tracking(0.5)
                         .foregroundColor(accentCyan)
+                        .lineLimit(1)
+                        .fixedSize()
                     Text("Göz simgesiyle izlemeye alın • Ok simgesiyle uygulamayı açın")
                         .font(.system(size: 10, weight: .medium, design: .rounded))
                         .foregroundColor(.white.opacity(0.55))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.85)
                 }
-
-                Spacer()
+                .frame(maxWidth: .infinity, alignment: .leading)
 
                 Button {
                     engine.refreshSystemTelemetry()
@@ -1855,6 +1888,7 @@ struct ShieldControlPopoverView: View {
                             .font(.system(size: 10, weight: .bold))
                         Text("Şimdi Tara")
                             .font(.system(size: 10, weight: .bold, design: .rounded))
+                            .lineLimit(1)
                     }
                     .padding(.horizontal, 9)
                     .padding(.vertical, 5)
@@ -1862,6 +1896,7 @@ struct ShieldControlPopoverView: View {
                     .foregroundColor(.white.opacity(0.9))
                 }
                 .buttonStyle(.plain)
+                .fixedSize()
             }
 
             LazyVGrid(columns: [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)], spacing: 7) {
@@ -1874,7 +1909,7 @@ struct ShieldControlPopoverView: View {
 
     private func agentRadarCard(_ status: AgentRuntimeStatus) -> some View {
         let isWatched = engine.watchedAgentKinds.contains(status.kind)
-        return VStack(alignment: .leading, spacing: 6) {
+        return VStack(alignment: .leading, spacing: 5) {
             HStack(spacing: 7) {
                 ZStack {
                     RoundedRectangle(cornerRadius: 7, style: .continuous)
@@ -1885,21 +1920,22 @@ struct ShieldControlPopoverView: View {
                         .font(.system(size: 12, weight: .bold))
                         .foregroundColor(status.isRunning ? status.kind.color : .white.opacity(0.42))
                 }
+                .fixedSize()
 
                 VStack(alignment: .leading, spacing: 1) {
                     Text(status.kind.displayName)
                         .font(.system(size: 11, weight: .bold, design: .rounded))
                         .foregroundColor(status.isRunning ? .white : .white.opacity(0.72))
                         .lineLimit(1)
-                        .minimumScaleFactor(0.82)
+                        .minimumScaleFactor(0.75)
 
                     Text(status.kind.categoryBadge)
                         .font(.system(size: 7.5, weight: .heavy, design: .monospaced))
                         .foregroundColor(status.kind.color.opacity(0.88))
                         .lineLimit(1)
+                        .fixedSize()
                 }
-
-                Spacer(minLength: 2)
+                .frame(maxWidth: .infinity, alignment: .leading)
 
                 if status.isRunning {
                     Text("×\(status.instanceCount)")
@@ -1908,22 +1944,24 @@ struct ShieldControlPopoverView: View {
                         .padding(.vertical, 2)
                         .background(Capsule().fill(status.kind.color))
                         .foregroundColor(.black)
+                        .lineLimit(1)
                         .fixedSize()
                 } else {
                     Circle()
                         .fill(Color.white.opacity(0.16))
                         .frame(width: 7, height: 7)
+                        .fixedSize()
                 }
             }
+            .frame(height: 26)
 
-            HStack(spacing: 5) {
+            HStack(spacing: 4) {
                 Text(status.detail)
                     .font(.system(size: 9.5, weight: .semibold, design: .rounded))
                     .foregroundColor(status.isRunning ? status.kind.color.opacity(0.95) : .white.opacity(0.40))
                     .lineLimit(1)
-                    .minimumScaleFactor(0.8)
-
-                Spacer(minLength: 2)
+                    .minimumScaleFactor(0.75)
+                    .frame(maxWidth: .infinity, alignment: .leading)
 
                 if status.kind != .terminalApps {
                     Button {
@@ -1935,6 +1973,7 @@ struct ShieldControlPopoverView: View {
                             .frame(width: 18, height: 18)
                     }
                     .buttonStyle(.plain)
+                    .fixedSize()
                     .help(isWatched ? "Kalkan gözcüsünde izleniyor" : "İzleme dışı")
                 }
 
@@ -1947,11 +1986,13 @@ struct ShieldControlPopoverView: View {
                         .frame(width: 18, height: 18)
                 }
                 .buttonStyle(.plain)
+                .fixedSize()
                 .help("\(status.kind.displayName) uygulamasını/terminalini öne getir")
             }
+            .frame(height: 18)
         }
         .padding(.horizontal, 10)
-        .padding(.vertical, 7.5)
+        .padding(.vertical, 7)
         .frame(height: 58)
         .background(
             RoundedRectangle(cornerRadius: 11, style: .continuous)
@@ -1980,8 +2021,9 @@ struct ShieldControlPopoverView: View {
                             .font(.system(size: 15, weight: .bold))
                             .foregroundColor(accentCyan)
                     }
+                    .fixedSize()
 
-                    VStack(alignment: .leading, spacing: 1) {
+                    VStack(alignment: .leading, spacing: 2) {
                         HStack(spacing: 6) {
                             Text("Otomatik Güncelleme (OTA)")
                                 .font(.system(size: 11.5, weight: .bold, design: .rounded))
@@ -1991,22 +2033,27 @@ struct ShieldControlPopoverView: View {
 
                             Text("v\(engine.currentVersionString)")
                                 .font(.system(size: 9, weight: .black, design: .monospaced))
-                                .padding(.horizontal, 5.5)
-                                .padding(.vertical, 1.5)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
                                 .background(Capsule().fill(Color.white.opacity(0.12)))
                                 .foregroundColor(accentCyan)
+                                .lineLimit(1)
+                                .fixedSize()
                         }
 
                         Text(updateStatusSubtitle)
                             .font(.system(size: 9.5, weight: .medium, design: .rounded))
                             .foregroundColor(updateStatusColor)
                             .lineLimit(1)
+                            .minimumScaleFactor(0.80)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                     }
-
-                    Spacer(minLength: 4)
+                    .frame(maxWidth: .infinity, alignment: .leading)
 
                     updateActionButton
+                        .fixedSize()
                 }
+                .frame(height: 34)
 
                 Divider().background(Color.white.opacity(0.08))
 
@@ -2014,12 +2061,14 @@ struct ShieldControlPopoverView: View {
                     Text("Yeni sürümleri arka planda otomatik indir ve kur")
                         .font(.system(size: 10, weight: .semibold, design: .rounded))
                         .foregroundColor(.white.opacity(0.78))
+                        .lineLimit(1)
                     Spacer()
                     Toggle("", isOn: $engine.autoInstallUpdates)
                         .toggleStyle(.switch)
                         .controlSize(.small)
                         .labelsHidden()
                 }
+                .frame(height: 20)
             }
             .padding(10)
             .background(
@@ -2186,25 +2235,27 @@ struct ShieldControlPopoverView: View {
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundColor(accentCyan)
                 .frame(width: 22, alignment: .center)
+                .fixedSize()
 
             VStack(alignment: .leading, spacing: 1.5) {
                 Text(title)
                     .font(.system(size: 11.5, weight: .bold, design: .rounded))
                     .foregroundColor(.white)
                     .lineLimit(1)
+                    .fixedSize()
                 Text(subtitle)
                     .font(.system(size: 9.5, weight: .medium, design: .rounded))
                     .foregroundColor(.white.opacity(0.55))
                     .lineLimit(1)
-                    .minimumScaleFactor(0.85)
+                    .minimumScaleFactor(0.82)
             }
-
-            Spacer(minLength: 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
 
             Toggle("", isOn: isOn)
                 .toggleStyle(.switch)
                 .controlSize(.small)
                 .labelsHidden()
+                .fixedSize()
         }
         .frame(height: 31)
     }
@@ -2219,10 +2270,13 @@ struct ShieldControlPopoverView: View {
                 Text(engine.hardwareSleepDisabled ? "Donanım Kilidi: AÇIK" : "Normal Uyku Modu")
                     .font(.system(size: 10, weight: .bold, design: .rounded))
                     .foregroundColor(.white.opacity(0.8))
+                    .lineLimit(1)
             }
+            .fixedSize()
 
             Text("•")
                 .foregroundColor(.white.opacity(0.25))
+                .fixedSize()
 
             HStack(spacing: 4) {
                 Image(systemName: engine.isCharging ? "bolt.batteryblock.fill" : "battery.75")
@@ -2231,7 +2285,9 @@ struct ShieldControlPopoverView: View {
                 Text("%\(engine.batteryLevel)")
                     .font(.system(size: 10, weight: .bold, design: .monospaced))
                     .foregroundColor(.white.opacity(0.8))
+                    .lineLimit(1)
             }
+            .fixedSize()
 
             Spacer()
 
@@ -2244,6 +2300,7 @@ struct ShieldControlPopoverView: View {
                         .font(.system(size: 9.5, weight: .bold))
                     Text("Çıkış")
                         .font(.system(size: 10, weight: .bold, design: .rounded))
+                        .lineLimit(1)
                 }
                 .foregroundColor(.white.opacity(0.65))
                 .padding(.horizontal, 10)
@@ -2251,6 +2308,7 @@ struct ShieldControlPopoverView: View {
                 .background(Capsule().fill(Color.white.opacity(0.07)))
             }
             .buttonStyle(.plain)
+            .fixedSize()
         }
         .frame(height: 24)
     }
@@ -2293,7 +2351,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         panel.standardWindowButton(.closeButton)?.isHidden = true
         panel.standardWindowButton(.miniaturizeButton)?.isHidden = true
         panel.standardWindowButton(.zoomButton)?.isHidden = true
-        panel.contentViewController = NSHostingController(rootView: ShieldControlPopoverView(engine: engine))
+        let hosting = NSHostingController(rootView: ShieldControlPopoverView(engine: engine))
+        hosting.safeAreaRegions = []
+        panel.contentViewController = hosting
+        panel.setContentSize(NSSize(width: 436, height: 620))
         positionWindowTopRight(panel)
         self.hudWindow = panel
 
