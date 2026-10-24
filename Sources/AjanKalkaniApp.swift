@@ -1264,11 +1264,12 @@ final class ShieldEngine: ObservableObject {
         stopCaffeinateProcess()
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: "/usr/bin/caffeinate")
+        let myPid = String(ProcessInfo.processInfo.processIdentifier)
         switch selectedMode {
         case .clamshellAgent, .smartAgentWatch:
-            proc.arguments = ["-ims"]
+            proc.arguments = ["-ims", "-w", myPid]
         case .fullPresentation:
-            proc.arguments = ["-dims"]
+            proc.arguments = ["-dims", "-w", myPid]
         }
         do {
             try proc.run()

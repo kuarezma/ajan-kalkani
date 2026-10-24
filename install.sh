@@ -18,6 +18,7 @@ swiftc -O -parse-as-library \
 
 echo "📦 Uygulama paketi oluşturuluyor: ${APP_BUNDLE}"
 killall -9 AjanKalkani 2>/dev/null || true
+killall caffeinate 2>/dev/null || true
 rm -f "$HOME/Library/LaunchAgents/com.ugurhoca.ajankalkani.plist" "$HOME/Library/Preferences/com.ugurhoca.ajankalkani.plist"
 mkdir -p "${APP_BUNDLE}/Contents/MacOS" "${APP_BUNDLE}/Contents/Resources"
 cp "${BUILD_DIR}/AjanKalkani" "${APP_BUNDLE}/Contents/MacOS/AjanKalkani"
