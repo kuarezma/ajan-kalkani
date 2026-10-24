@@ -1,6 +1,8 @@
 import SwiftUI
 import AppKit
+import Foundation
 import IOKit.ps
+import IOKit.pwr_mgt
 import ServiceManagement
 import Darwin
 
@@ -256,8 +258,9 @@ final class ShieldEngine: ObservableObject {
             NSApp.setActivationPolicy(showInDock ? .regular : .accessory)
         }
     }
-    @Published var autoActivateOnAgent: Bool = false {
+    @Published var autoActivateOnAgent: Bool = true {
         didSet {
+            UserDefaults.standard.set(autoActivateOnAgent, forKey: "autoActivateOnAgentV34")
             UserDefaults.standard.set(autoActivateOnAgent, forKey: "autoActivateOnAgent")
         }
     }
@@ -276,8 +279,8 @@ final class ShieldEngine: ObservableObject {
     @Published var launchAtLogin: Bool = false
 
     // OTA Güncelleme Durumu
-    let currentVersionString: String = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "3.3.1"
-    let currentBuildNumber: Int = Int(Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "331") ?? 331
+    let currentVersionString: String = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "3.4.0"
+    let currentBuildNumber: Int = Int(Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "340") ?? 340
     @Published var updateState: UpdateState = .idle
     @Published var latestManifest: RemoteVersionManifest? = nil
     @Published var lastUpdateCheckText: String = "Henüz kontrol edilmedi"
@@ -304,6 +307,8 @@ final class ShieldEngine: ObservableObject {
     var onStatusBarUpdate: (() -> Void)?
 
     private var caffeinateProcess: Process?
+    private var systemSleepAssertionID: IOPMAssertionID = 0
+    private var displaySleepAssertionID: IOPMAssertionID = 0
     private var countdownTimer: Timer?
     private var telemetryTimer: Timer?
     private var idleAgentEmptyCount: Int = 0
@@ -321,8 +326,12 @@ final class ShieldEngine: ObservableObject {
         if UserDefaults.standard.object(forKey: "showInDock") != nil {
             self.showInDock = UserDefaults.standard.bool(forKey: "showInDock")
         }
-        if UserDefaults.standard.object(forKey: "autoActivateOnAgent") != nil {
-            self.autoActivateOnAgent = UserDefaults.standard.bool(forKey: "autoActivateOnAgent")
+        if UserDefaults.standard.object(forKey: "autoActivateOnAgentV34") != nil {
+            self.autoActivateOnAgent = UserDefaults.standard.bool(forKey: "autoActivateOnAgentV34")
+        } else {
+            self.autoActivateOnAgent = true
+            UserDefaults.standard.set(true, forKey: "autoActivateOnAgentV34")
+            UserDefaults.standard.set(true, forKey: "autoActivateOnAgent")
         }
         if UserDefaults.standard.object(forKey: "batterySafetyEnabled") != nil {
             self.batterySafetyEnabled = UserDefaults.standard.bool(forKey: "batterySafetyEnabled")
@@ -359,12 +368,22 @@ final class ShieldEngine: ObservableObject {
         checkLaunchAtLoginStatus()
         restoreSessionIfUpdated()
         if !isActive {
-            // Uygulama yeni açıldığında aktif bir oturum devralınmadıysa, önceki çökme/kapanmadan kalmış olabilecek yetim pmset kilidini sıfırla
-            DispatchQueue.global(qos: .utility).async { [weak self] in
-                if Self.checkPmsetSleepDisabledSync() {
-                    Task { @MainActor [weak self] in
-                        _ = self?.setPmsetSleepDisabled(false)
-                        self?.hardwareSleepDisabled = false
+            restorePersistedSessionIfNeeded()
+        }
+        if !isActive {
+            // Yalnızca önceki oturumda kilidi Ajan Kalkanı koyduysa ve başka bir uyku koruyucu (Vorssaint vb.) aktif değilse sıfırla
+            let ownedLock = UserDefaults.standard.bool(forKey: "ajanKalkaniOwnedPmsetLock")
+            if ownedLock {
+                DispatchQueue.global(qos: .utility).async { [weak self] in
+                    let sleepDis = Self.checkPmsetSleepDisabledSync()
+                    let externalActive = Self.isExternalSleepBlockerActiveSync()
+                    if sleepDis && !externalActive {
+                        Task { @MainActor [weak self] in
+                            _ = self?.setPmsetSleepDisabled(false)
+                            self?.hardwareSleepDisabled = false
+                        }
+                    } else {
+                        UserDefaults.standard.set(false, forKey: "ajanKalkaniOwnedPmsetLock")
                     }
                 }
             }
@@ -410,14 +429,77 @@ final class ShieldEngine: ObservableObject {
             self.remainingSeconds = savedRem
             self.targetEndDate = (self.selectedDuration == .infinite) ? nil : Date().addingTimeInterval(TimeInterval(savedRem))
             beginAppNapProtection()
+            acquireNativePowerAssertions()
             _ = setPmsetSleepDisabled(true)
             startCaffeinateProcess()
             self.isActive = true
             self.hardwareSleepDisabled = true
+            self.saveActiveSessionState()
             self.statusMessage = "v\(updatedToVer) sürümüne güncellendi • Kalkan kesintisiz devam ediyor"
             startCountdownLoop()
             onStatusBarUpdate?()
         }
+    }
+
+    // MARK: - Yeniden Başlatma Sonrası Kalıcı Kalkan Oturumunu Geri Yükle
+    private func saveActiveSessionState() {
+        UserDefaults.standard.set(isActive, forKey: "persistedShieldActive")
+        UserDefaults.standard.set(selectedDuration.rawValue, forKey: "persistedDurationRaw")
+        UserDefaults.standard.set(totalSeconds, forKey: "persistedTotalSeconds")
+        UserDefaults.standard.set(selectedMode.rawValue, forKey: "persistedModeRaw")
+        if let target = targetEndDate {
+            UserDefaults.standard.set(target.timeIntervalSince1970, forKey: "persistedTargetEndTimestamp")
+        } else {
+            UserDefaults.standard.set(0.0, forKey: "persistedTargetEndTimestamp")
+        }
+    }
+
+    private func clearSavedSessionState() {
+        UserDefaults.standard.set(false, forKey: "persistedShieldActive")
+        UserDefaults.standard.set(0.0, forKey: "persistedTargetEndTimestamp")
+    }
+
+    private func restorePersistedSessionIfNeeded() {
+        guard UserDefaults.standard.bool(forKey: "persistedShieldActive") else { return }
+        let savedDurRaw = UserDefaults.standard.integer(forKey: "persistedDurationRaw")
+        let savedTot = UserDefaults.standard.integer(forKey: "persistedTotalSeconds")
+        let savedModeRaw = UserDefaults.standard.string(forKey: "persistedModeRaw") ?? selectedMode.rawValue
+        let savedEndTs = UserDefaults.standard.double(forKey: "persistedTargetEndTimestamp")
+
+        if let mode = ShieldMode(rawValue: savedModeRaw) {
+            self.selectedMode = mode
+        }
+        if let dur = ShieldDuration(rawValue: savedDurRaw) {
+            self.selectedDuration = dur
+        }
+
+        if self.selectedDuration == .infinite {
+            self.totalSeconds = 0
+            self.remainingSeconds = 0
+            self.targetEndDate = nil
+        } else {
+            let nowTs = Date().timeIntervalSince1970
+            let rem = Int(ceil(savedEndTs - nowTs))
+            guard rem > 5 else {
+                clearSavedSessionState()
+                return
+            }
+            self.totalSeconds = max(savedTot, rem)
+            self.remainingSeconds = rem
+            self.targetEndDate = Date(timeIntervalSince1970: savedEndTs)
+        }
+
+        beginAppNapProtection()
+        acquireNativePowerAssertions()
+        let pmsetOk = setPmsetSleepDisabled(true)
+        startCaffeinateProcess()
+        self.isActive = true
+        self.hardwareSleepDisabled = pmsetOk
+        self.statusMessage = self.selectedDuration == .infinite
+            ? "Kapak Kalkanı SÜRESİZ aktif • Kapağı kapatabilirsiniz"
+            : "Kapak Kalkanı kaldığı süreden devam ediyor • Kapağı kapatabilirsiniz"
+        startCountdownLoop()
+        onStatusBarUpdate?()
     }
 
     private func beginAppNapProtection() {
@@ -614,11 +696,13 @@ final class ShieldEngine: ObservableObject {
         idleAgentEmptyCount = 0
 
         beginAppNapProtection()
+        acquireNativePowerAssertions()
         let pmsetOk = setPmsetSleepDisabled(true)
         startCaffeinateProcess()
 
         isActive = true
         hardwareSleepDisabled = pmsetOk
+        saveActiveSessionState()
         statusMessage = duration == .infinite
             ? "Kapak Kalkanı SÜRESİZ aktif • Kapağı kapatabilirsiniz"
             : "Kapak Kalkanı \(duration.title) boyunca aktif • Kapağı kapatabilirsiniz"
@@ -632,11 +716,19 @@ final class ShieldEngine: ObservableObject {
     func deactivateShield(reason: String = "Kalkan devre dışı bırakıldı.") {
         stopCountdownLoop()
         stopCaffeinateProcess()
+        releaseNativePowerAssertions()
         endAppNapProtection()
-        _ = setPmsetSleepDisabled(false)
+        clearSavedSessionState()
+
+        if !Self.isExternalSleepBlockerActiveSync() {
+            _ = setPmsetSleepDisabled(false)
+            hardwareSleepDisabled = false
+        } else {
+            UserDefaults.standard.set(false, forKey: "ajanKalkaniOwnedPmsetLock")
+            hardwareSleepDisabled = Self.checkPmsetSleepDisabledSync()
+        }
 
         isActive = false
-        hardwareSleepDisabled = false
         remainingSeconds = 0
         targetEndDate = nil
         statusMessage = reason
@@ -652,6 +744,7 @@ final class ShieldEngine: ObservableObject {
             totalSeconds = duration.rawValue
             remainingSeconds = duration.rawValue
             targetEndDate = (duration == .infinite) ? nil : Date().addingTimeInterval(TimeInterval(duration.rawValue))
+            saveActiveSessionState()
             statusMessage = duration == .infinite
                 ? "Süre SÜRESİZ olarak güncellendi • Kapağı kapatabilirsiniz"
                 : "Süre \(duration.title) olarak güncellendi • Kapağı kapatabilirsiniz"
@@ -676,6 +769,7 @@ final class ShieldEngine: ObservableObject {
             totalSeconds = max(totalSeconds, newRemaining)
             targetEndDate = Date().addingTimeInterval(TimeInterval(newRemaining))
         }
+        saveActiveSessionState()
         playSound(named: "Pop")
         onStatusBarUpdate?()
     }
@@ -683,7 +777,9 @@ final class ShieldEngine: ObservableObject {
     func selectMode(_ mode: ShieldMode) {
         selectedMode = mode
         if isActive {
+            acquireNativePowerAssertions()
             startCaffeinateProcess()
+            saveActiveSessionState()
             playSound(named: "Tink")
             statusMessage = "\(mode.title) moduna geçildi."
         }
@@ -842,9 +938,17 @@ final class ShieldEngine: ObservableObject {
                 self.hardwareSleepDisabled = sleepDis
                 self.agentStatuses = statuses
 
-                if self.isActive && !sleepDis {
-                    _ = self.setPmsetSleepDisabled(true)
-                    self.hardwareSleepDisabled = true
+                if self.isActive {
+                    if !sleepDis {
+                        _ = self.setPmsetSleepDisabled(true)
+                        self.hardwareSleepDisabled = true
+                    }
+                    if self.systemSleepAssertionID == 0 {
+                        self.acquireNativePowerAssertions()
+                    }
+                    if self.caffeinateProcess == nil || self.caffeinateProcess?.isRunning == false {
+                        self.startCaffeinateProcess()
+                    }
                 }
 
                 let watchedRunning = statuses.contains { status in
@@ -1040,7 +1144,69 @@ final class ShieldEngine: ObservableObject {
         }
     }
 
-    // MARK: - Donanım Komutları (pmset & caffeinate)
+    // MARK: - Donanım Komutları (Native IOPMAssertion, pmset & caffeinate)
+    private func acquireNativePowerAssertions() {
+        releaseNativePowerAssertions()
+
+        var sysID: IOPMAssertionID = 0
+        let sysReason = "Ajan Kalkani: Autonomous Coding & Clamshell Shield" as CFString
+        let sysRes = IOPMAssertionCreateWithName(
+            kIOPMAssertionTypePreventUserIdleSystemSleep as CFString,
+            IOPMAssertionLevel(kIOPMAssertionLevelOn),
+            sysReason,
+            &sysID
+        )
+        if sysRes == kIOReturnSuccess {
+            systemSleepAssertionID = sysID
+        }
+
+        if selectedMode == .fullPresentation {
+            var dispID: IOPMAssertionID = 0
+            let dispReason = "Ajan Kalkani: Keep Display Awake" as CFString
+            let dispRes = IOPMAssertionCreateWithName(
+                kIOPMAssertionTypePreventUserIdleDisplaySleep as CFString,
+                IOPMAssertionLevel(kIOPMAssertionLevelOn),
+                dispReason,
+                &dispID
+            )
+            if dispRes == kIOReturnSuccess {
+                displaySleepAssertionID = dispID
+            }
+        }
+    }
+
+    private func releaseNativePowerAssertions() {
+        if systemSleepAssertionID != 0 {
+            IOPMAssertionRelease(systemSleepAssertionID)
+            systemSleepAssertionID = 0
+        }
+        if displaySleepAssertionID != 0 {
+            IOPMAssertionRelease(displaySleepAssertionID)
+            displaySleepAssertionID = 0
+        }
+    }
+
+    nonisolated static func isExternalSleepBlockerActiveSync() -> Bool {
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: "/usr/bin/pmset")
+        proc.arguments = ["-g", "assertions"]
+        let outPipe = Pipe()
+        proc.standardOutput = outPipe
+        proc.standardError = Pipe()
+        do {
+            try proc.run()
+            let data = outPipe.fileHandleForReading.readDataToEndOfFile()
+            proc.waitUntilExit()
+            if let output = String(data: data, encoding: .utf8) {
+                let lower = output.lowercased()
+                if lower.contains("vorssaint") || lower.contains("amphetamine") || lower.contains("keepingyouawake") {
+                    return true
+                }
+            }
+        } catch {}
+        return false
+    }
+
     @discardableResult
     private func setPmsetSleepDisabled(_ disable: Bool) -> Bool {
         let flag = disable ? "1" : "0"
@@ -1056,15 +1222,22 @@ final class ShieldEngine: ObservableObject {
             _ = pipe.fileHandleForReading.readDataToEndOfFile()
             proc.waitUntilExit()
             if proc.terminationStatus == 0 {
+                UserDefaults.standard.set(disable, forKey: "ajanKalkaniOwnedPmsetLock")
                 return true
             }
         } catch {}
 
-        let scriptSource = "do shell script \"/usr/bin/pmset disablesleep \(flag)\" with administrator privileges"
+        // Şifresiz sudo kuralı henüz yoksa tek seferlik yönetici izniyle hem kuralı kur hem pmset'i uygula
+        let user = NSUserName()
+        let cmd = "mkdir -p /etc/sudoers.d && echo '\(user) ALL=(root) NOPASSWD: /usr/bin/pmset disablesleep 1, /usr/bin/pmset disablesleep 0' > /etc/sudoers.d/ajan-kalkani && chmod 0440 /etc/sudoers.d/ajan-kalkani && /usr/bin/pmset disablesleep \(flag)"
+        let scriptSource = "do shell script \"\(cmd)\" with administrator privileges"
         if let appleScript = NSAppleScript(source: scriptSource) {
             var errorDict: NSDictionary? = nil
             appleScript.executeAndReturnError(&errorDict)
-            return errorDict == nil
+            if errorDict == nil {
+                UserDefaults.standard.set(disable, forKey: "ajanKalkaniOwnedPmsetLock")
+                return true
+            }
         }
         return false
     }
@@ -1209,11 +1382,16 @@ final class ShieldEngine: ObservableObject {
 
     func cleanupBeforeExit() {
         stopCaffeinateProcess()
+        releaseNativePowerAssertions()
         endAppNapProtection()
         AjanKalkaniMain.releaseSingleInstanceLock()
-        // Eğer uygulama kendi kendini güncelliyorsa kapak uykusu kilidini koru; yeni sürüm 0.4sn içinde devralacak
+        // Eğer uygulama kendi kendini güncelliyorsa veya dış bir uyku koruyucu (Vorssaint vb.) aktifse kapak kilidini bozma
         if !isUpdatingAndRestarting && (isActive || hardwareSleepDisabled) {
-            _ = setPmsetSleepDisabled(false)
+            if !Self.isExternalSleepBlockerActiveSync() {
+                _ = setPmsetSleepDisabled(false)
+            } else {
+                UserDefaults.standard.set(false, forKey: "ajanKalkaniOwnedPmsetLock")
+            }
         }
     }
 }
@@ -2451,10 +2629,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         button.imagePosition = .imageLeading
         let titleText = engine.compactMenuBarTime
         if titleText.isEmpty {
-            let attrs: [NSAttributedString.Key: Any] = [
-                .font: NSFont.systemFont(ofSize: 11, weight: .bold)
-            ]
-            button.attributedTitle = NSAttributedString(string: " Kalkan", attributes: attrs)
+            if engine.isActive {
+                let attrs: [NSAttributedString.Key: Any] = [
+                    .font: NSFont.systemFont(ofSize: 11, weight: .bold),
+                    .foregroundColor: NSColor(calibratedRed: 0.25, green: 0.95, blue: 0.82, alpha: 1.0)
+                ]
+                button.attributedTitle = NSAttributedString(string: " Kalkan • AÇIK", attributes: attrs)
+            } else {
+                let attrs: [NSAttributedString.Key: Any] = [
+                    .font: NSFont.systemFont(ofSize: 11, weight: .medium),
+                    .foregroundColor: NSColor.secondaryLabelColor
+                ]
+                button.attributedTitle = NSAttributedString(string: " Kalkan", attributes: attrs)
+            }
         } else {
             let attrs: [NSAttributedString.Key: Any] = [
                 .font: NSFont.monospacedDigitSystemFont(ofSize: 11.5, weight: .bold),
@@ -2507,20 +2694,24 @@ struct AjanKalkaniMain {
 
         signal(SIGTERM) { _ in
             AjanKalkaniMain.releaseSingleInstanceLock()
-            let proc = Process()
-            proc.executableURL = URL(fileURLWithPath: "/usr/bin/sudo")
-            proc.arguments = ["-n", "/usr/bin/pmset", "disablesleep", "0"]
-            try? proc.run()
-            proc.waitUntilExit()
+            if !ShieldEngine.isExternalSleepBlockerActiveSync() {
+                let proc = Process()
+                proc.executableURL = URL(fileURLWithPath: "/usr/bin/sudo")
+                proc.arguments = ["-n", "/usr/bin/pmset", "disablesleep", "0"]
+                try? proc.run()
+                proc.waitUntilExit()
+            }
             exit(0)
         }
         signal(SIGINT) { _ in
             AjanKalkaniMain.releaseSingleInstanceLock()
-            let proc = Process()
-            proc.executableURL = URL(fileURLWithPath: "/usr/bin/sudo")
-            proc.arguments = ["-n", "/usr/bin/pmset", "disablesleep", "0"]
-            try? proc.run()
-            proc.waitUntilExit()
+            if !ShieldEngine.isExternalSleepBlockerActiveSync() {
+                let proc = Process()
+                proc.executableURL = URL(fileURLWithPath: "/usr/bin/sudo")
+                proc.arguments = ["-n", "/usr/bin/pmset", "disablesleep", "0"]
+                try? proc.run()
+                proc.waitUntilExit()
+            }
             exit(0)
         }
 
