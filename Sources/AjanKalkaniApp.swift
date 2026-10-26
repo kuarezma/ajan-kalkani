@@ -279,8 +279,8 @@ final class ShieldEngine: ObservableObject {
     @Published var launchAtLogin: Bool = false
 
     // OTA Güncelleme Durumu
-    let currentVersionString: String = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "3.4.0"
-    let currentBuildNumber: Int = Int(Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "340") ?? 340
+    let currentVersionString: String = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "3.4.1"
+    let currentBuildNumber: Int = Int(Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "341") ?? 341
     @Published var updateState: UpdateState = .idle
     @Published var latestManifest: RemoteVersionManifest? = nil
     @Published var lastUpdateCheckText: String = "Henüz kontrol edilmedi"
@@ -1021,40 +1021,53 @@ final class ShieldEngine: ObservableObject {
                         continue
                     }
 
+                    let isBackgroundDaemonProcess =
+                        lowerArgs.contains("remote-control serve") ||
+                        lowerArgs.contains("claude remote-control") ||
+                        lowerArgs.contains("bridge-spawn") ||
+                        lowerArgs.contains("--sdk-url") ||
+                        lowerArgs.contains("agy-hud-daemon") ||
+                        lowerArgs.contains("agy-companion") ||
+                        lowerArgs.contains("statusline.py") ||
+                        lowerArgs.contains("codex-code-mode-host") ||
+                        (lowerArgs.contains("/chatgpt.app/") && lowerArgs.contains("codex-cli"))
+
+                    if isBackgroundDaemonProcess {
+                        continue
+                    }
+
                     let hasRealTty = tty != "??" && !tty.isEmpty
                     if hasRealTty {
                         allTtys.insert(tty)
                     }
 
                     // 1 & 2: Claude Code (App) vs Claude Terminal (CLI)
-                    if lowerArgs.contains("/claude.app/contents/macos/claude") {
+                    if lowerArgs.contains("/claude.app/contents/macos/claude") && !lowerArgs.contains("helper") {
                         counts[.claudeCode, default: 0] += 1
                     } else if lowerComm == "claude" || lowerArgs.contains("/.local/bin/claude") || lowerArgs.contains("/.local/share/claude/") || lowerArgs.contains("claude-science") {
                         if !lowerComm.hasSuffix("sh") && lowerComm != "script" {
                             counts[.claudeTerminal, default: 0] += 1
                             if hasRealTty { ttyMap[.claudeTerminal, default: []].insert(tty) }
-                        } else if lowerArgs.contains("claude remote-control") && lowerComm == "script" {
-                            counts[.claudeTerminal, default: 0] += 1
                         }
                     }
 
                     // 3 & 4: Codex (App/Host) vs Codex Terminal (CLI)
-                    if lowerArgs.contains("/codex.app/contents/macos/") || lowerArgs.contains("codex-code-mode-host") {
+                    if lowerArgs.contains("/codex.app/contents/macos/") && !lowerArgs.contains("helper") && !lowerArgs.contains("renderer") && !lowerArgs.contains("service") {
                         counts[.codex, default: 0] += 1
                     } else if lowerComm == "codex" || lowerArgs.contains("/bin/codex") || lowerArgs.contains("codex-cli") {
-                        if !lowerComm.hasSuffix("sh") && !lowerArgs.contains("codex-title-ratelimit") {
+                        if !lowerComm.hasSuffix("sh") && !lowerArgs.contains("codex-title-ratelimit") && !lowerArgs.contains("app-server") {
                             counts[.codexTerminal, default: 0] += 1
                             if hasRealTty { ttyMap[.codexTerminal, default: []].insert(tty) }
                         }
                     }
 
-                    // 5 & 6: AGY (Antigravity App/Daemon) vs AGY Terminal (CLI)
-                    if lowerArgs.contains("/antigravity.app/contents/macos/") || lowerArgs.contains("agy-hud-daemon") || lowerArgs.contains("agy-companion") {
+                    // 5 & 6: AGY (Antigravity App) vs AGY Terminal (CLI)
+                    if lowerArgs.contains("/antigravity.app/contents/macos/") {
                         if !lowerArgs.contains("helper") {
                             counts[.agy, default: 0] += 1
                         }
                     } else if lowerComm == "agy" || lowerComm == "agyc" || lowerArgs.contains("/.local/bin/agy") || lowerArgs.contains("antigravity-cli") {
-                        if !lowerArgs.contains("agy-hud-daemon") && !lowerArgs.contains("agy-notify") && !lowerArgs.contains("agy-checkpoint") && !lowerArgs.contains("agy-quota") && !lowerComm.hasSuffix("sh") {
+                        if !lowerArgs.contains("agy-notify") && !lowerArgs.contains("agy-checkpoint") && !lowerArgs.contains("agy-quota") && !lowerComm.hasSuffix("sh") && !lowerComm.hasPrefix("python") {
                             counts[.agyTerminal, default: 0] += 1
                             if hasRealTty { ttyMap[.agyTerminal, default: []].insert(tty) }
                         }

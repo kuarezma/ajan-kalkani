@@ -1,8 +1,8 @@
 {
-  "version": "3.4.0",
-  "build": 340,
-  "released_at": "2026-10-24T18:42:00+03:00",
+  "version": "3.4.1",
+  "build": 341,
+  "released_at": "2026-10-27T01:03:00+03:00",
   "download_url": "https://github.com/kuarezma/ajan-kalkani/releases/latest/download/AjanKalkani.app.zip",
   "tarball_url": "https://github.com/kuarezma/ajan-kalkani/archive/refs/heads/main.tar.gz",
-  "notes": "v3.4.0: Çekirdek seviyesi Native IOKit güç kilitleri (IOPMAssertionCreateWithName), yeniden başlatma sonrası kalıcı oturum hafızası, varsayılan otonom ajan aktivasyonu ve dış uyku koruyucularla (Vorssaint/Amphetamine) sıfır çakışma mimarisi."
+  "notes": "v3.4.1: Ajan Radarı arka plan daemon (claude remote-control, bridge-spawn, agy remote-control serve, agy-hud-daemon, statusline.py ve ChatGPT.app codex-code-mode-host) filtrelemesi eklendi; yalnızca gerçek aktif ajan oturumları gösterilir."
 }
