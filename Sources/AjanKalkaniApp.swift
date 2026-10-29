@@ -233,6 +233,7 @@ final class ShieldEngine: ObservableObject {
     @Published var remainingSeconds: Int = 0
     @Published var totalSeconds: Int = 7200
     @Published var currentTab: DashboardTab = .shield
+    @Published var isHudWindowVisible: Bool = false
 
     // Duvar Saati (Wall-Clock) Hedef Bitiş Zamanı ve App Nap Kilidi
     private var targetEndDate: Date? = nil
@@ -855,6 +856,16 @@ final class ShieldEngine: ObservableObject {
         }
     }
 
+    func syncDisplayedRemainingTime() {
+        guard isActive, selectedDuration != .infinite else { return }
+        if let target = targetEndDate {
+            let nextRem = max(0, Int(ceil(target.timeIntervalSinceNow)))
+            if remainingSeconds != nextRem {
+                remainingSeconds = nextRem
+            }
+        }
+    }
+
     // MARK: - Zamanlayıcı Döngüsü
     private func startCountdownLoop() {
         stopCountdownLoop()
@@ -885,8 +896,16 @@ final class ShieldEngine: ObservableObject {
             }
 
             if nextRemaining > 0 {
-                remainingSeconds = nextRemaining
-                onStatusBarUpdate?()
+                // HUD penceresi kapalıysa ve kalan süre 1 saatin üzerindeyse (menü barı SS:DD gösterir),
+                // SwiftUI ağacını her saniye yeniden çizmemek için yalnızca görünürken veya dakika değiştiğinde yayınla.
+                let minuteChanged = (nextRemaining / 60) != (remainingSeconds / 60)
+                let needsSecondPrecision = isHudWindowVisible || nextRemaining < 3600
+                if needsSecondPrecision || minuteChanged || (nextRemaining % 15 == 0) {
+                    if remainingSeconds != nextRemaining {
+                        remainingSeconds = nextRemaining
+                    }
+                    onStatusBarUpdate?()
+                }
             } else {
                 deactivateShield(reason: "Süre tamamlandı, Mac normal uyku moduna döndü.")
                 sendUserNotification(
@@ -900,7 +919,7 @@ final class ShieldEngine: ObservableObject {
 
     // MARK: - Sistem & Ajan Telemetri Döngüsü
     private func startTelemetryLoop() {
-        telemetryTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) { [weak self] _ in
+        telemetryTimer = Timer.scheduledTimer(withTimeInterval: 6.0, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 self?.refreshSystemTelemetry()
             }
@@ -935,8 +954,12 @@ final class ShieldEngine: ObservableObject {
 
             Task { @MainActor [weak self] in
                 guard let self = self else { return }
-                self.hardwareSleepDisabled = sleepDis
-                self.agentStatuses = statuses
+                if self.hardwareSleepDisabled != sleepDis {
+                    self.hardwareSleepDisabled = sleepDis
+                }
+                if self.agentStatuses != statuses {
+                    self.agentStatuses = statuses
+                }
 
                 if self.isActive {
                     if !sleepDis {
@@ -1307,10 +1330,15 @@ final class ShieldEngine: ObservableObject {
         for ps in sources {
             if let info = IOPSGetPowerSourceDescription(snapshot, ps)?.takeUnretainedValue() as? [String: Any] {
                 if let capacity = info[kIOPSCurrentCapacityKey as String] as? Int {
-                    self.batteryLevel = capacity
+                    if self.batteryLevel != capacity {
+                        self.batteryLevel = capacity
+                    }
                 }
                 if let state = info[kIOPSPowerSourceStateKey as String] as? String {
-                    self.isCharging = (state == kIOPSACPowerValue as String)
+                    let charging = (state == kIOPSACPowerValue as String)
+                    if self.isCharging != charging {
+                        self.isCharging = charging
+                    }
                 }
             }
         }
@@ -1413,8 +1441,6 @@ final class ShieldEngine: ObservableObject {
 // MARK: - Görsel Ana Arayüz (Sıfır Kaymalı Sabit Izgara Tasarımı)
 struct ShieldControlPopoverView: View {
     @ObservedObject var engine: ShieldEngine
-    @State private var pulseAnimation: Bool = false
-    @State private var ringRotation: Double = 0
     @State private var hoverPowerOrb: Bool = false
 
     private let accentCyan = Color(red: 0.16, green: 0.88, blue: 0.76)
@@ -1443,8 +1469,6 @@ struct ShieldControlPopoverView: View {
                 )
                 .frame(width: 420, height: 420)
                 .offset(y: -85)
-                .scaleEffect(pulseAnimation && engine.isActive ? 1.06 : 0.95)
-                .animation(.easeInOut(duration: 2.6).repeatForever(autoreverses: true), value: pulseAnimation)
                 .allowsHitTesting(false)
 
             VStack(spacing: 12) {
@@ -1472,12 +1496,6 @@ struct ShieldControlPopoverView: View {
         .frame(width: 436, height: 620)
         .ignoresSafeArea()
         .preferredColorScheme(.dark)
-        .onAppear {
-            pulseAnimation = true
-            withAnimation(.linear(duration: 10).repeatForever(autoreverses: false)) {
-                ringRotation = 360
-            }
-        }
     }
 
     // MARK: - Üst Başlık Barı (Sıfır Kaymalı Simetrik Düzen)
@@ -1558,6 +1576,7 @@ struct ShieldControlPopoverView: View {
 
             // Sağ Üst Menü Çubuğuna Küçült / Gizle butonu
             Button {
+                engine.isHudWindowVisible = false
                 NSApp.windows.forEach { win in
                     if win is NSPanel {
                         win.orderOut(nil)
@@ -1692,9 +1711,10 @@ struct ShieldControlPopoverView: View {
                         Circle()
                             .trim(from: 0.0, to: CGFloat(max(0.04, engine.progressFraction)))
                             .stroke(
-                                AngularGradient(
-                                    gradient: Gradient(colors: [accentCyan, accentIndigo, accentCyan]),
-                                    center: .center
+                                LinearGradient(
+                                    colors: [accentCyan, accentIndigo],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
                                 ),
                                 style: StrokeStyle(lineWidth: 8, lineCap: .round)
                             )
@@ -1705,14 +1725,14 @@ struct ShieldControlPopoverView: View {
 
                         Circle()
                             .strokeBorder(
-                                AngularGradient(
-                                    gradient: Gradient(colors: [.clear, accentCyan.opacity(0.6), .clear, accentIndigo.opacity(0.6), .clear]),
-                                    center: .center
+                                LinearGradient(
+                                    colors: [accentCyan.opacity(0.45), accentIndigo.opacity(0.45)],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
                                 ),
-                                lineWidth: 1.8
+                                lineWidth: 1.6
                             )
                             .frame(width: 146, height: 146)
-                            .rotationEffect(.degrees(ringRotation))
                     }
 
                     Button {
@@ -2510,7 +2530,7 @@ struct ShieldControlPopoverView: View {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
-    private var hudWindow: NSPanel!
+    private var hudWindow: NSPanel?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Komut satırından --tab radar veya --tab settings ile başlatma desteği
@@ -2524,31 +2544,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let engine = ShieldEngine.shared
         NSApp.setActivationPolicy(engine.showInDock ? .regular : .accessory)
-
-        let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 436, height: 620),
-            styleMask: [.titled, .closable, .fullSizeContentView],
-            backing: .buffered,
-            defer: false
-        )
-        panel.titleVisibility = .hidden
-        panel.titlebarAppearsTransparent = true
-        panel.isMovableByWindowBackground = true
-        panel.hidesOnDeactivate = false
-        panel.level = .floating
-        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-        panel.backgroundColor = .clear
-        panel.isOpaque = false
-        panel.hasShadow = true
-        panel.standardWindowButton(.closeButton)?.isHidden = true
-        panel.standardWindowButton(.miniaturizeButton)?.isHidden = true
-        panel.standardWindowButton(.zoomButton)?.isHidden = true
-        let hosting = NSHostingController(rootView: ShieldControlPopoverView(engine: engine))
-        hosting.safeAreaRegions = []
-        panel.contentViewController = hosting
-        panel.setContentSize(NSSize(width: 436, height: 620))
-        positionWindowTopRight(panel)
-        self.hudWindow = panel
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem.autosaveName = "AjanKalkaniStatusItem"
@@ -2564,7 +2559,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         updateStatusItemAppearance()
 
-        showControlInterface()
+        if args.contains("--show") || args.contains("--tab") {
+            showControlInterface()
+        }
+    }
+
+    private func ensureHudWindow() -> NSPanel {
+        if let existing = hudWindow {
+            return existing
+        }
+        let engine = ShieldEngine.shared
+        let panel = NSPanel(
+            contentRect: NSRect(x: 0, y: 0, width: 436, height: 620),
+            styleMask: [.titled, .closable, .fullSizeContentView],
+            backing: .buffered,
+            defer: true
+        )
+        panel.titleVisibility = .hidden
+        panel.titlebarAppearsTransparent = true
+        panel.isMovableByWindowBackground = true
+        panel.hidesOnDeactivate = false
+        panel.level = .floating
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        panel.backgroundColor = .clear
+        panel.isOpaque = false
+        panel.hasShadow = true
+        panel.standardWindowButton(.closeButton)?.isHidden = true
+        panel.standardWindowButton(.miniaturizeButton)?.isHidden = true
+        panel.standardWindowButton(.zoomButton)?.isHidden = true
+        let hosting = NSHostingController(rootView: ShieldControlPopoverView(engine: engine))
+        panel.contentViewController = hosting
+        panel.setContentSize(NSSize(width: 436, height: 620))
+        positionWindowTopRight(panel)
+        self.hudWindow = panel
+        return panel
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
@@ -2602,30 +2630,46 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func toggleControlInterface() {
-        if hudWindow.isVisible {
-            hudWindow.orderOut(nil)
+        if let panel = hudWindow, panel.isVisible {
+            ShieldEngine.shared.isHudWindowVisible = false
+            panel.orderOut(nil)
             return
         }
         showControlInterface()
     }
 
     private func showControlInterface() {
+        let panel = ensureHudWindow()
+        ShieldEngine.shared.isHudWindowVisible = true
+        ShieldEngine.shared.syncDisplayedRemainingTime()
         ShieldEngine.shared.refreshSystemTelemetry()
-        if !hudWindow.isVisible {
-            positionWindowTopRight(hudWindow)
+        if !panel.isVisible {
+            positionWindowTopRight(panel)
         }
-        hudWindow.makeKeyAndOrderFront(nil)
+        panel.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
+
+    private var cachedActiveIcon: NSImage?
+    private var cachedInactiveIcon: NSImage?
+    private var lastTitleRendered: String?
+    private var lastActiveStateRendered: Bool?
 
     func updateStatusItemAppearance() {
         guard let button = statusItem.button else { return }
         let engine = ShieldEngine.shared
+        let titleText = engine.compactMenuBarTime
 
-        let symbolName = "bolt.shield.fill"
-        let config = NSImage.SymbolConfiguration(pointSize: 14, weight: .bold)
-        if let img = NSImage(systemSymbolName: symbolName, accessibilityDescription: "Ajan Kalkanı")?.withSymbolConfiguration(config) {
-            if engine.isActive {
+        if lastActiveStateRendered == engine.isActive && lastTitleRendered == titleText {
+            return
+        }
+        lastActiveStateRendered = engine.isActive
+        lastTitleRendered = titleText
+
+        if cachedActiveIcon == nil || cachedInactiveIcon == nil {
+            let symbolName = "bolt.shield.fill"
+            let config = NSImage.SymbolConfiguration(pointSize: 14, weight: .bold)
+            if let img = NSImage(systemSymbolName: symbolName, accessibilityDescription: "Ajan Kalkanı")?.withSymbolConfiguration(config) {
                 let tinted = NSImage(size: img.size, flipped: false) { rect in
                     img.draw(in: rect)
                     NSColor(calibratedRed: 0.18, green: 0.92, blue: 0.78, alpha: 1.0).set()
@@ -2633,15 +2677,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     return true
                 }
                 tinted.isTemplate = false
-                button.image = tinted
-            } else {
-                img.isTemplate = true
-                button.image = img
+                cachedActiveIcon = tinted
+
+                let templateCopy = img.copy() as? NSImage ?? img
+                templateCopy.isTemplate = true
+                cachedInactiveIcon = templateCopy
             }
         }
 
+        button.image = engine.isActive ? cachedActiveIcon : cachedInactiveIcon
         button.imagePosition = .imageLeading
-        let titleText = engine.compactMenuBarTime
+
         if titleText.isEmpty {
             if engine.isActive {
                 let attrs: [NSAttributedString.Key: Any] = [
